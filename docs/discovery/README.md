@@ -5,6 +5,8 @@ Version 0.1 · Prepared 17 October 2026 · Status: Draft for internal review
 
 > Guiding principle: understand how cooperatives work before building software to manage them.
 
+Stakeholder summary page (private until shared): https://claude.ai/artifact/Qu7aMs1gPa1q4inSrSZwMB
+
 This folder is the first deliverable from the master prompt (§16). It is a **plan and a set of research instruments**. It does not specify the product. No code, schema or stack decisions should be taken from it.
 
 ## Evidence labels used throughout
