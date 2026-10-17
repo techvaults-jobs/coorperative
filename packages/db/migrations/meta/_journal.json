@@ -64,6 +64,20 @@
       "when": 1792237567149,
       "tag": "0008_loan_guardrails",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792248251438,
+      "tag": "0009_payroll",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792248252191,
+      "tag": "0010_payroll_guardrails",
+      "breakpoints": true
     }
   ]
 }

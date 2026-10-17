@@ -33,7 +33,16 @@ import { memberCounts, monthlyFlows } from "./services/reports.js";
 import { createAccount, getSocietySettings, setAccountActive, updateSocietySettings } from "./services/settings.js";
 import { approveProductPolicy, listProducts, proposePolicyChange, proposeProduct } from "./services/products.js";
 import { applyForLoan, decideLoan, disburseLoan, getLoan, loanEligibility, loanPosition, recordRepayment } from "./services/loans.js";
-import { DEFAULT_LOAN_POLICY, kobo } from "@techvaults/core";
+import { DEFAULT_LOAN_POLICY, DEFAULT_SAVINGS_POLICY, DEFAULT_SHARES_POLICY, kobo } from "@techvaults/core";
+import {
+  createPayrollRun,
+  importRemittance,
+  issuePayrollRun,
+  payrollReconciliation,
+  payrollSchedule,
+  setContribution,
+  submitPayrollRun,
+} from "./services/payroll.js";
 import {
   acceptInvitation,
   changeOfficerRoles,
@@ -594,5 +603,67 @@ describe.runIf(ADMIN)("database guardrails", () => {
     const after = (await withSociety(app.db, ids.socA, (tx) => getLoan(tx, treasurer(), loan.id)))!;
     expect(after.policy.annualRateBps).toBe(1200);
     expect(after.policyVersion).toBe(1);
+  });
+
+  it("runs a month of payroll deductions from schedule to posting", async () => {
+    const secretary = actor(["secretary"], ids.treasurer);
+    const committee = actor(["chairperson"], ids.chair);
+    const savingsId = await withSociety(app.db, ids.socA, (tx) => proposeProduct(tx, secretary, { kind: "savings", code: "ORD-SAV", name: "Ordinary savings", accountId: ids.savings, policy: DEFAULT_SAVINGS_POLICY }));
+    const sharesId = await withSociety(app.db, ids.socA, (tx) => proposeProduct(tx, secretary, { kind: "shares", code: "ORD-SHR", name: "Ordinary shares", accountId: ids.shares, policy: DEFAULT_SHARES_POLICY }));
+    for (const id of [savingsId, sharesId]) await withSociety(app.db, ids.socA, (tx) => approveProductPolicy(tx, committee, id));
+    const people = await withSociety(app.db, ids.socA, (tx) => listMembers(tx, actor(["secretary"])));
+    const a1 = people.find((m) => m.memberNo === "A-001")!;
+    const a2 = people.find((m) => m.memberNo === "A-002")!;
+    await withSociety(app.db, ids.socA, async (tx) => {
+      await setContribution(tx, treasurer(), a1.id, savingsId, parseNaira("10000"));
+      await setContribution(tx, treasurer(), a1.id, sharesId, parseNaira("5000"));
+      await setContribution(tx, treasurer(), a2.id, savingsId, parseNaira("3000"));
+    });
+
+    // A running loan with instalments due in October and November.
+    const [loanProduct] = await withSociety(app.db, ids.socA, (tx) => listProducts(tx, treasurer(), { kind: "loan" }));
+    const loan = await withSociety(app.db, ids.socA, (tx) =>
+      applyForLoan(tx, treasurer(), { memberId: a1.id, productId: loanProduct!.id, amount: parseNaira("12000"), termMonths: 3, purpose: "Rent", guarantorIds: [a2.id] }),
+    );
+    await withSociety(app.db, ids.socA, (tx) => decideLoan(tx, committee, loan.id, "approve", ""));
+    const d = await withSociety(app.db, ids.socA, (tx) => disburseLoan(tx, treasurer(), loan.id, { disbursedOn: "2026-10-01", firstDueDate: "2026-10-31", bankAccountId: ids.bank, idempotencyKey: "pay-disburse" }));
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, committee, d.submissionId));
+
+    const runId = await withSociety(app.db, ids.socA, (tx) => createPayrollRun(tx, treasurer(), { period: "2026-11", strategy: "loans_first" }));
+    await expect(withSociety(app.db, ids.socA, (tx) => createPayrollRun(tx, treasurer(), { period: "2026-11", strategy: "loans_first" }))).rejects.toThrow(/already a run/);
+    await expect(withSociety(app.db, ids.socA, (tx) => createPayrollRun(tx, actor(["auditor"], ids.auditor), { period: "2026-12", strategy: "pro_rata" }))).rejects.toBeInstanceOf(PermissionError);
+    const schedule = await withSociety(app.db, ids.socA, (tx) => payrollSchedule(tx, treasurer(), runId));
+    const s1 = schedule.find((r) => r.memberId === a1.id)!;
+    const twoInstalments = (await withSociety(app.db, ids.socA, (tx) => getLoan(tx, treasurer(), loan.id)))!.position.schedule!.instalments.slice(0, 2).reduce((s, i) => s + i.payment, 0n);
+    expect(s1).toMatchObject({ savings: parseNaira("10000"), shares: parseNaira("5000"), loans: twoInstalments });
+    expect(schedule.find((r) => r.memberId === a2.id)!.total).toBe(parseNaira("3000"));
+    await withSociety(app.db, ids.socA, (tx) => issuePayrollRun(tx, treasurer(), runId));
+
+    // A file with a bad line is refused whole.
+    const bad = await withSociety(app.db, ids.socA, (tx) => importRemittance(tx, treasurer(), runId, "Staff ID,Amount\nUL/2231,lots\n", "2026-11-28"));
+    expect(bad.errors).toHaveLength(1);
+
+    // A-001 pays ₦5,000 short; A-002 is missing; one line isn't anyone's.
+    const paid = kobo(s1.total - parseNaira("5000"));
+    const csv = `Staff ID,Name,Amount\nul/2231,"Okafor, Adaeze",${(Number(paid) / 100).toFixed(2)}\nZZ/9999,Unknown,700\n`;
+    const result = await withSociety(app.db, ids.socA, (tx) => importRemittance(tx, treasurer(), runId, csv, "2026-11-28"));
+    expect(result).toMatchObject({ lines: 2, matched: 1, unmatched: 1, errors: [] });
+    const recon = await withSociety(app.db, ids.socA, (tx) => payrollReconciliation(tx, treasurer(), runId));
+    expect(Object.fromEntries(recon.rows.map((r) => [r.memberNo, r.status]))).toEqual({ "A-001": "short", "A-002": "missing" });
+    expect(recon.unmatched).toEqual([{ line: 3, externalId: "ZZ/9999", name: "Unknown", amount: parseNaira("700") }]);
+    expect(recon.totals.shortfall).toBe(parseNaira("8000"));
+
+    // Posting needs a second officer; the loan and suspense move only when it's approved.
+    const { submissionId } = await withSociety(app.db, ids.socA, (tx) => submitPayrollRun(tx, treasurer(), runId, { bankAccountId: ids.bank, idempotencyKey: "payroll-2026-11" }));
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, committee, submissionId));
+    const [run] = (await admin`select status from payroll_runs where id = ${runId}`) as unknown as [{ status: string }];
+    expect(run.status).toBe("posted");
+    const after = (await withSociety(app.db, ids.socA, (tx) => getLoan(tx, treasurer(), loan.id)))!;
+    expect(after.position.arrears).toBe(0n); // loans first: both instalments were met
+    const tb = await withSociety(app.db, ids.socA, (tx) => trialBalance(tx));
+    expect(tb.find((r) => r.code === "2900")!.balance).toBe(parseNaira("700"));
+    expect(tb.reduce((s, r) => s + r.debit, 0n)).toBe(tb.reduce((s, r) => s + r.credit, 0n));
+    // A posted run is history.
+    await rejectsWith(withSociety(app.db, ids.socA, (tx) => tx.execute(sql`delete from payroll_items where run_id = ${runId}`)), /can no longer change/);
   });
 });

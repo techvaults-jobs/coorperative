@@ -23,6 +23,7 @@ import {
   proposeProduct,
   recordRepayment,
   schema,
+  setContribution,
   sql,
   submitJournalEntry,
   withSociety,
@@ -438,11 +439,35 @@ async function seedProducts(slug: string, loanName: string, sampleLoans: boolean
   if (added) console.log(`Added ${added} demo products${sampleLoans ? " and sample loans" : ""} to ${society.name}.`);
 }
 
+/** Standing monthly contributions for the staff society, matching its seeded history. */
+async function seedContributions(slug: string) {
+  const [society] = await db.select().from(schema.societies).where(sql`slug = ${slug}`);
+  const [admin] = await db.select().from(schema.users).where(sql`email = ${email}`);
+  if (!society || !admin) return;
+  const actor: Actor = { userId: admin.id, societyId: society.id, roles: ADMIN_ROLES };
+  const set = await withSociety(db, society.id, async (tx) => {
+    const existing = await tx.select().from(schema.memberContributions).where(sql`society_id = ${society.id}`);
+    if (existing.length) return 0;
+    const products = await tx.select().from(schema.products).where(sql`society_id = ${society.id} and status = 'active'`);
+    const savings = products.find((p) => p.code === "ORD-SAV");
+    const shares = products.find((p) => p.code === "ORD-SHR");
+    if (!savings || !shares) return 0;
+    const members = await tx.select().from(schema.members).where(sql`society_id = ${society.id} and status = 'active'`).orderBy(schema.members.memberNo);
+    for (const [i, m] of members.entries()) {
+      await setContribution(tx, actor, m.id, savings.id, parseNaira(String(10000 + i * 2500)));
+      await setContribution(tx, actor, m.id, shares.id, parseNaira("5000"));
+    }
+    return members.length;
+  });
+  if (set) console.log(`Set monthly contributions for ${set} members of ${society.name}.`);
+}
+
 try {
   await seedSociety(staffSociety);
   await seedSociety(farmSociety);
   await seedProducts(staffSociety.slug, "Regular loan", false);
   await seedProducts(farmSociety.slug, "Input loan", true);
+  await seedContributions(staffSociety.slug);
 } finally {
   await close();
 }

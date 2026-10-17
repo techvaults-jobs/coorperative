@@ -304,6 +304,23 @@ export async function loanPosition(tx: Tx, loan: LoanRow, asOf = today()): Promi
 }
 
 /**
+ * Split a payment on a loan, "interest first": interest due under the schedule up to `paidOn`
+ * and not yet paid is covered first, the rest reduces principal. Refuses more than is owed.
+ */
+export async function splitRepayment(tx: Tx, loan: LoanRow, amount: Kobo, paidOn: string): Promise<{ interest: Kobo; principal: Kobo }> {
+  const position = await loanPosition(tx, loan, paidOn);
+  const interestDue = (position.schedule?.instalments ?? []).filter((i) => i.dueDate <= paidOn).reduce((s, i) => s + i.interest, 0n) - position.interestPaid;
+  const interest = kobo(interestDue > 0n ? (amount < interestDue ? amount : interestDue) : 0n);
+  const principal = kobo(amount - interest);
+  if (principal > position.principalOutstanding) {
+    throw new LoanError(
+      `Loan #${loan.loanNo}: that's more than the outstanding principal and interest due (${(Number(position.principalOutstanding + interest) / 100).toLocaleString("en-NG", { style: "currency", currency: "NGN" })}).`,
+    );
+  }
+  return { interest, principal };
+}
+
+/**
  * Prepare a repayment. Interest due under the schedule to date is covered first, then
  * principal (a named allocation strategy, "interest first"). Another officer approves it.
  */
@@ -317,13 +334,7 @@ export async function recordRepayment(
   if (input.amount <= 0n) throw new LoanError("Enter the amount paid.");
   const loan = await lockLoan(tx, loanId);
   if (loan.status !== "active") throw new LoanError(`Repayments can only be recorded on an active loan (this one is ${loan.status}).`);
-  const position = await loanPosition(tx, loan, input.paidOn);
-  const interestDue = (position.schedule?.instalments ?? []).filter((i) => i.dueDate <= input.paidOn).reduce((s, i) => s + i.interest, 0n) - position.interestPaid;
-  const interest = kobo(interestDue > 0n ? (input.amount < interestDue ? input.amount : interestDue) : 0n);
-  const principal = kobo(input.amount - interest);
-  if (principal > position.principalOutstanding) {
-    throw new LoanError(`That's more than the loan's outstanding principal and interest due (${(Number(position.principalOutstanding + interest) / 100).toLocaleString("en-NG", { style: "currency", currency: "NGN" })}).`);
-  }
+  const { interest, principal } = await splitRepayment(tx, loan, input.amount, input.paidOn);
   const [product] = await tx.select().from(products).where(eq(products.id, loan.productId));
   const bank = await bankAccount(tx, input.bankAccountId);
   const no = await memberNo(tx, loan.memberId);

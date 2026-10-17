@@ -1,5 +1,5 @@
 import { formatNaira } from "@techvaults/core";
-import { getMember, listJournal, listLoans, memberBalances } from "@techvaults/db";
+import { getMember, listContributions, listJournal, listLoans, listProducts, memberBalances } from "@techvaults/db";
 import Link from "next/link";
 import { Briefcase, CalendarDays, Hash, Landmark, Mail, Phone, PiggyBank, ShieldCheck, Wallet } from "lucide-react";
 import { notFound } from "next/navigation";
@@ -7,6 +7,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { buttonClass } from "@/components/ui/button";
 import { LOAN_STATUS } from "@/lib/loan-status";
+import { ContributionsForm } from "./contributions-form";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat";
@@ -24,6 +25,7 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
   if (!hasPermission(ws, "members.read")) return <EmptyState title="Your role doesn't include the member register." />;
   const { id } = await params;
   const { terminology: terms, modules } = await requireSociety();
+  const showContributions = hasPermission(ws, "payroll.manage") || hasPermission(ws, "members.read");
   const showLoans = modules.includes("loans") && (hasPermission(ws, "loans.prepare") || hasPermission(ws, "loans.approve") || hasPermission(ws, "ledger.read"));
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
   const data = await inSociety(ws, async (tx) => {
@@ -35,10 +37,12 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
       balances: canLedger ? await memberBalances(tx, id) : null,
       entries: canLedger ? await listJournal(tx, ws.actor, { memberId: id, limit: 200 }) : [],
       loans: showLoans ? await listLoans(tx, ws.actor, { memberId: id }) : [],
+      contributions: showContributions ? await listContributions(tx, ws.actor, { memberId: id }) : [],
+      savingProducts: showContributions ? (await listProducts(tx, ws.actor)).filter((p) => p.kind !== "loan" && p.status === "active") : [],
     };
   });
   if (!data) notFound();
-  const { member, balances, entries, loans } = data;
+  const { member, balances, entries, loans, contributions, savingProducts } = data;
   const status = MEMBER_STATUS[member.status];
   const details = [
     { icon: Hash, label: terms.externalId, value: member.staffId },
@@ -79,6 +83,25 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
             balances.map((b) => <StatCard key={b.code} label={b.name} icon={ICONS[b.code.slice(0, 2)]} value={formatNaira(b.balance)} />)
           )}
         </section>
+      )}
+
+      {savingProducts.length > 0 && (
+        <Card>
+          <CardHeader
+            title="Monthly contributions"
+            description={`Standing amounts that go on the ${terms.contribution.toLowerCase()} schedule each month.`}
+          />
+          <CardBody>
+            <ContributionsForm
+              memberId={member.id}
+              canEdit={hasPermission(ws, "payroll.manage")}
+              products={savingProducts.map((p) => {
+                const c = contributions.find((x) => x.productId === p.id);
+                return { id: p.id, name: p.name, amount: c ? (Number(c.amount) / 100).toFixed(2) : "" };
+              })}
+            />
+          </CardBody>
+        </Card>
       )}
 
       {showLoans && (

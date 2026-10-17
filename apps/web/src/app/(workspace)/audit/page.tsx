@@ -36,6 +36,11 @@ const ACTION_LABEL: Record<string, string> = {
   "loan.rejected": "Loan declined",
   "loan.withdrawn": "Loan withdrawn",
   "loan.disbursement_prepared": "Loan disbursement prepared",
+  "contribution.changed": "Monthly contribution changed",
+  "payroll.created": "Payroll month started",
+  "payroll.issued": "Deduction schedule sent",
+  "payroll.remittance_loaded": "Remittance loaded",
+  "payroll.submitted": "Payroll posting prepared",
 };
 
 export default async function AuditPage() {

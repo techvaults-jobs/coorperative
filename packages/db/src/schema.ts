@@ -32,6 +32,8 @@ export const societySector = pgEnum("society_sector", ["workplace", "agricultura
 export const productKind = pgEnum("product_kind", ["savings", "shares", "loan"]);
 export const productStatus = pgEnum("product_status", ["proposed", "active", "retired"]);
 export const loanStatus = pgEnum("loan_status", ["applied", "approved", "rejected", "withdrawn", "disbursing", "active", "closed"]);
+export const payrollStatus = pgEnum("payroll_status", ["draft", "issued", "reconciled", "submitted", "posted"]);
+export const payrollItemKind = pgEnum("payroll_item_kind", ["loan", "savings", "shares"]);
 export const submissionStatus = pgEnum("submission_status", ["pending", "approved", "rejected", "withdrawn"]);
 
 export const societies = pgTable("societies", {
@@ -427,5 +429,93 @@ export const loanGuarantors = pgTable(
     primaryKey({ columns: [t.loanId, t.memberId] }),
     foreignKey({ columns: [t.societyId, t.loanId], foreignColumns: [loans.societyId, loans.id] }),
     foreignKey({ columns: [t.societyId, t.memberId], foreignColumns: [members.societyId, members.id] }),
+  ],
+);
+
+/** A member's standing monthly contribution to a savings or share product. */
+export const memberContributions = pgTable(
+  "member_contributions",
+  {
+    societyId: uuid("society_id").notNull(),
+    memberId: uuid("member_id").notNull(),
+    productId: uuid("product_id").notNull(),
+    amount: bigint("amount", { mode: "bigint" }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.memberId, t.productId] }),
+    foreignKey({ columns: [t.societyId, t.memberId], foreignColumns: [members.societyId, members.id] }),
+    foreignKey({ columns: [t.societyId, t.productId], foreignColumns: [products.societyId, products.id] }),
+    check("member_contributions_amount", sql`${t.amount} > 0`),
+  ],
+);
+
+/**
+ * One month's payroll deductions: the schedule sent to the employer, the remittance that came
+ * back, how it was allocated, and the journal submission that posts it.
+ */
+export const payrollRuns = pgTable(
+  "payroll_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    societyId: uuid("society_id").notNull().references(() => societies.id),
+    /** YYYY-MM */
+    period: text("period").notNull(),
+    status: payrollStatus("status").notNull().default("draft"),
+    strategy: text("strategy").notNull(),
+    createdBy: uuid("created_by").notNull().references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    issuedAt: timestamp("issued_at", { withTimezone: true }),
+    receivedOn: date("received_on"),
+    submissionId: uuid("submission_id"),
+  },
+  (t) => [
+    uniqueIndex("payroll_runs_society_period").on(t.societyId, t.period),
+    unique("payroll_runs_society_id_id").on(t.societyId, t.id),
+    foreignKey({ columns: [t.societyId, t.submissionId], foreignColumns: [journalSubmissions.societyId, journalSubmissions.id] }),
+    check("payroll_runs_period", sql`${t.period} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`),
+  ],
+);
+
+export const payrollItems = pgTable(
+  "payroll_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    societyId: uuid("society_id").notNull(),
+    runId: uuid("run_id").notNull(),
+    memberId: uuid("member_id").notNull(),
+    kind: payrollItemKind("kind").notNull(),
+    productId: uuid("product_id").notNull(),
+    loanId: uuid("loan_id"),
+    scheduled: bigint("scheduled", { mode: "bigint" }).notNull(),
+    /** Set at reconciliation. */
+    allocated: bigint("allocated", { mode: "bigint" }),
+  },
+  (t) => [
+    foreignKey({ columns: [t.societyId, t.runId], foreignColumns: [payrollRuns.societyId, payrollRuns.id] }).onDelete("cascade"),
+    foreignKey({ columns: [t.societyId, t.memberId], foreignColumns: [members.societyId, members.id] }),
+    foreignKey({ columns: [t.societyId, t.productId], foreignColumns: [products.societyId, products.id] }),
+    foreignKey({ columns: [t.societyId, t.loanId], foreignColumns: [loans.societyId, loans.id] }),
+    index("payroll_items_run").on(t.runId),
+    check("payroll_items_scheduled", sql`${t.scheduled} > 0`),
+  ],
+);
+
+export const payrollRemittanceLines = pgTable(
+  "payroll_remittance_lines",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    societyId: uuid("society_id").notNull(),
+    runId: uuid("run_id").notNull(),
+    line: integer("line").notNull(),
+    externalId: text("external_id").notNull(),
+    name: text("name"),
+    amount: bigint("amount", { mode: "bigint" }).notNull(),
+    memberId: uuid("member_id"),
+  },
+  (t) => [
+    foreignKey({ columns: [t.societyId, t.runId], foreignColumns: [payrollRuns.societyId, payrollRuns.id] }).onDelete("cascade"),
+    foreignKey({ columns: [t.societyId, t.memberId], foreignColumns: [members.societyId, members.id] }),
+    index("payroll_remittance_lines_run").on(t.runId),
   ],
 );

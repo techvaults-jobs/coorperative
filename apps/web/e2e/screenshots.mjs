@@ -62,7 +62,7 @@ for (const [theme, vp, tag] of [["light", { width: 1440, height: 900 }, "light"]
     const values = await select.locator("option").evaluateAll((os) => os.map((o) => o.value));
     await Promise.all([page.waitForURL(/overview/), select.selectOption(values.at(-1))]);
     await page.waitForLoadState("networkidle");
-    for (const path of ["/overview", "/members", "/settings", "/settings/branding", "/settings/sector", "/settings/accounts"]) {
+    for (const path of ["/overview", "/members", "/payroll", "/settings", "/settings/branding", "/settings/sector", "/settings/accounts"]) {
       await page.goto(`${BASE}${path}`, { waitUntil: "networkidle" });
       await page.waitForTimeout(300);
       await page.screenshot({ path: `${OUT}/society2-${path.slice(1).replaceAll("/", "-")}.png`, fullPage: true });

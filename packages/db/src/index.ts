@@ -9,4 +9,5 @@ export * from "./services/reports.js";
 export * from "./services/settings.js";
 export * from "./services/products.js";
 export * from "./services/loans.js";
+export * from "./services/payroll.js";
 export * from "./services/societies.js";

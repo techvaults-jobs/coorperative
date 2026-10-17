@@ -1,5 +1,5 @@
 import type { Module, Permission } from "@techvaults/core";
-import { BookOpen, ClipboardCheck, HandCoins, LayoutDashboard, Package, Scale, Settings, ShieldCheck, UserCog, Users, type LucideIcon } from "lucide-react";
+import { BookOpen, ClipboardCheck, FileSpreadsheet, HandCoins, LayoutDashboard, Package, Scale, Settings, ShieldCheck, UserCog, Users, type LucideIcon } from "lucide-react";
 
 export interface NavItem {
   href: string;
@@ -23,6 +23,7 @@ export const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     label: "Finance",
     items: [
       { href: "/ledger", label: "Journal", icon: BookOpen, anyOf: ["ledger.read"], keywords: "entries ledger post" },
+      { href: "/payroll", label: "Payroll deductions", icon: FileSpreadsheet, anyOf: ["payroll.manage"], module: "payroll", keywords: "remittance employer schedule reconciliation ippis" },
       { href: "/approvals", label: "Approvals", icon: ClipboardCheck, anyOf: ["ledger.approve", "ledger.prepare"], keywords: "maker checker pending" },
       { href: "/trial-balance", label: "Trial balance", icon: Scale, anyOf: ["ledger.read"], keywords: "accounts totals" },
     ],

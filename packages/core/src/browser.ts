@@ -9,3 +9,4 @@ export * from "./permissions.js";
 export * from "./configuration.js";
 export * from "./loans.js";
 export * from "./products.js";
+export * from "./payroll.js";

@@ -316,6 +316,32 @@ try {
   await page.goto(`${BASE}/audit`);
   check("audit chain verifies", (await page.getByText(/Chain verified/).count()) === 1);
 
+  // Payroll: schedule → employer CSV → remittance with a shortfall and an unknown ID → posting approved
+  await page.goto(`${BASE}/payroll`, { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Build schedule" }).click();
+  await page.waitForURL(/\/payroll\/[0-9a-f-]{36}/, { timeout: 15000 });
+  const runUrl = page.url().split("?")[0];
+  check("payroll schedule is built from contributions", (await page.locator("tbody tr").count()) === 10);
+  await page.getByRole("button", { name: "Freeze and send to employer" }).click();
+  await page.getByText("Schedule frozen.").waitFor({ timeout: 10000 });
+  const csvRes = await page.request.get(`${runUrl}/schedule.csv`);
+  const scheduleCsv = (await csvRes.text()).replace(/^\uFEFF/, "");
+  check("employer schedule downloads as CSV", csvRes.ok() && scheduleCsv.startsWith("Staff ID,Name,Member no."), scheduleCsv.slice(0, 40));
+  const csvRows = scheduleCsv.trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
+  const remittance = ["Staff ID,Name,Amount", ...csvRows.map(([id, name, , , , , total], i) => `${id},${name},${i === 0 ? (Number(total) - 1000).toFixed(2) : total}`), "XX/0000,Unknown Person,750.00"].join("\n");
+  await page.fill("#csv", remittance);
+  await page.getByRole("button", { name: "Load and reconcile" }).click();
+  await page.getByText("Remittance loaded and reconciled.").waitFor({ timeout: 15000 });
+  check("reconciliation flags a short deduction", (await page.locator("tbody tr", { hasText: "Short" }).count()) === 1);
+  check("an unknown ID is listed as unidentified", (await page.getByText("XX/0000").count()) === 1);
+  await page.getByRole("button", { name: "Submit for posting" }).click();
+  await page.getByText("Posting prepared.").waitFor({ timeout: 15000 });
+  await chair.goto(`${BASE}/approvals`, { waitUntil: "networkidle" });
+  await chair.locator("article", { hasText: "Payroll deductions" }).getByRole("button", { name: "Approve and post" }).click();
+  await chair.getByText(/Approved and posted as entry #\d+/).waitFor({ timeout: 15000 });
+  await page.goto(runUrl, { waitUntil: "networkidle" });
+  check("approved payroll run is posted", (await page.getByText("Posted", { exact: true }).count()) > 0);
+
   // Removing an officer takes effect on their next request
   await page.goto(`${BASE}/officers`, { waitUntil: "networkidle" });
   const row = page.locator("tr", { hasText: chairEmail });
