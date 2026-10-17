@@ -487,3 +487,43 @@ export async function portfolioSummary(tx: Tx, actor: Actor, asOf = today()): Pr
     positions,
   };
 }
+
+export const AGING_BUCKETS = [
+  { key: "current", label: "Current", min: 0, max: 0 },
+  { key: "d1_30", label: "1–30 days", min: 1, max: 30 },
+  { key: "d31_60", label: "31–60 days", min: 31, max: 60 },
+  { key: "d61_90", label: "61–90 days", min: 61, max: 90 },
+  { key: "d90", label: "Over 90 days", min: 91, max: Infinity },
+] as const;
+
+export interface AgingReport {
+  asOf: string;
+  buckets: { key: string; label: string; count: number; outstanding: Kobo; arrears: Kobo }[];
+  loans: (LoanView & { position: LoanPosition; bucket: string })[];
+  total: Kobo;
+}
+
+/** Active loans by how late their oldest unpaid instalment is, as at a date. */
+export async function loanAging(tx: Tx, actor: Actor, asOf = today()): Promise<AgingReport> {
+  const summary = await portfolioSummary(tx, actor, asOf);
+  const active = (await listLoans(tx, actor, { status: ["active"] })).map((l) => {
+    const position = summary.positions.get(l.id)!;
+    const bucket = AGING_BUCKETS.find((b) => position.daysPastDue >= b.min && position.daysPastDue <= b.max)!.key;
+    return { ...l, position, bucket };
+  });
+  return {
+    asOf,
+    buckets: AGING_BUCKETS.map((b) => {
+      const mine = active.filter((l) => l.bucket === b.key);
+      return {
+        key: b.key,
+        label: b.label,
+        count: mine.length,
+        outstanding: kobo(mine.reduce((s, l) => s + l.position.principalOutstanding, 0n)),
+        arrears: kobo(mine.reduce((s, l) => s + l.position.arrears, 0n)),
+      };
+    }),
+    loans: active.sort((a, b) => b.position.daysPastDue - a.position.daysPastDue),
+    total: summary.outstanding,
+  };
+}

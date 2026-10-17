@@ -23,7 +23,7 @@ for (const [theme, vp, tag] of [["light", { width: 1440, height: 900 }, "light"]
   await ctx.addCookies(cookies);
   const page = await ctx.newPage();
   page.on("pageerror", (e) => errors.push(`${page.url()}: ${e.message}`));
-  for (const path of tag === "mobile" ? ["/overview", "/members"] : ["/overview", "/members", "/loans", "/loans/new", "/products", "/ledger", "/approvals", "/officers", "/trial-balance"]) {
+  for (const path of tag === "mobile" ? ["/overview", "/members"] : ["/overview", "/members", "/loans", "/loans/new", "/products", "/reports", "/reports/position", "/reports/income", "/reports/loans", "/ledger", "/approvals", "/officers", "/trial-balance"]) {
     await page.goto(`${BASE}${path}`, { waitUntil: "networkidle" });
     await page.waitForTimeout(300);
     await page.screenshot({ path: `${OUT}/${tag}-${path.slice(1).replaceAll("/", "-")}.png`, fullPage: tag !== "mobile" });

@@ -197,8 +197,21 @@ body {
   [data-print-hide] {
     display: none !important;
   }
+  :root {
+    color-scheme: light;
+    --background: #ffffff;
+    --surface: #ffffff;
+    --foreground: #000000;
+    --muted: #444444;
+  }
   body {
     background: white;
+  }
+  main {
+    padding: 0 !important;
+  }
+  @page {
+    margin: 16mm 14mm;
   }
 }
 

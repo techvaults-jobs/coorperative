@@ -316,6 +316,19 @@ try {
   await page.goto(`${BASE}/audit`);
   check("audit chain verifies", (await page.getByText(/Chain verified/).count()) === 1);
 
+  // Reports agree with the ledger
+  await page.goto(`${BASE}/reports/position`, { waitUntil: "networkidle" });
+  check("statement of financial position balances", (await page.getByText("✓ Assets equal liabilities plus members' funds.").count()) === 1);
+  const positionCsv = await page.request.get(`${BASE}/reports/export?report=position`);
+  check("reports download as CSV", positionCsv.ok() && (await positionCsv.text()).includes("Accumulated surplus"));
+  await page.goto(`${BASE}/reports/income?from=2026-01-01&to=2026-12-31`, { waitUntil: "networkidle" });
+  check("income statement shows the statutory reserve", (await page.getByText("Statutory reserve, 25% of surplus (Act s.34)").count()) === 1);
+  await page.goto(`${BASE}/members?q=Chiamaka`, { waitUntil: "networkidle" });
+  await page.click("text=Chiamaka Eze");
+  await page.getByRole("link", { name: "Statement" }).click();
+  await page.waitForURL(/\/statement/);
+  check("member statement shows the loan balance", (await page.getByText(/Closing balance\s*₦150,000.00/).count()) === 1);
+
   // Payroll: schedule → employer CSV → remittance with a shortfall and an unknown ID → posting approved
   await page.goto(`${BASE}/payroll`, { waitUntil: "networkidle" });
   await page.getByRole("button", { name: "Build schedule" }).click();

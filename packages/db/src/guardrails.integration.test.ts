@@ -29,10 +29,10 @@ import {
   type Actor,
 } from "./services/ledger.js";
 import { createMember, listMembers, updateMember } from "./services/members.js";
-import { memberCounts, monthlyFlows } from "./services/reports.js";
+import { financialPosition, incomeStatement, memberCounts, memberStatement, monthlyFlows } from "./services/reports.js";
 import { createAccount, getSocietySettings, setAccountActive, updateSocietySettings } from "./services/settings.js";
 import { approveProductPolicy, listProducts, proposePolicyChange, proposeProduct } from "./services/products.js";
-import { applyForLoan, decideLoan, disburseLoan, getLoan, loanEligibility, loanPosition, recordRepayment } from "./services/loans.js";
+import { applyForLoan, decideLoan, disburseLoan, getLoan, loanAging, loanEligibility, loanPosition, recordRepayment } from "./services/loans.js";
 import { DEFAULT_LOAN_POLICY, DEFAULT_SAVINGS_POLICY, DEFAULT_SHARES_POLICY, kobo } from "@techvaults/core";
 import {
   createPayrollRun,
@@ -665,5 +665,34 @@ describe.runIf(ADMIN)("database guardrails", () => {
     expect(tb.reduce((s, r) => s + r.debit, 0n)).toBe(tb.reduce((s, r) => s + r.credit, 0n));
     // A posted run is history.
     await rejectsWith(withSociety(app.db, ids.socA, (tx) => tx.execute(sql`delete from payroll_items where run_id = ${runId}`)), /can no longer change/);
+  });
+
+  it("produces financial statements that agree with the ledger", async () => {
+    const tb = await withSociety(app.db, ids.socA, (tx) => trialBalance(tx));
+    const position = await withSociety(app.db, ids.socA, (tx) => financialPosition(tx, treasurer(), "2027-12-31"));
+    expect(position.balanced).toBe(true);
+    expect(position.totals.assets).toBe(tb.filter((r) => r.class === "asset").reduce((s, r) => s + r.balance, 0n));
+    const statement = await withSociety(app.db, ids.socA, (tx) => incomeStatement(tx, treasurer(), "2000-01-01", "2027-12-31"));
+    const tbSurplus = tb.filter((r) => r.class === "income").reduce((s, r) => s + r.balance, 0n) - tb.filter((r) => r.class === "expense").reduce((s, r) => s + r.balance, 0n);
+    expect(statement.totals.surplus).toBe(tbSurplus);
+    expect(position.surplus).toBe(tbSurplus);
+    expect(statement.statutoryReserve).toBe(kobo((tbSurplus * 25n + 50n) / 100n));
+    // A period excludes what falls outside it.
+    const before = await withSociety(app.db, ids.socA, (tx) => incomeStatement(tx, treasurer(), "2000-01-01", "2000-12-31"));
+    expect(before.totals.surplus).toBe(0n);
+
+    // A member statement's closing balances equal the member's balances; the period splits opening from movements.
+    const [a1] = (await withSociety(app.db, ids.socA, (tx) => listMembers(tx, actor(["secretary"])))).filter((m) => m.memberNo === "A-001");
+    const accounts = await withSociety(app.db, ids.socA, (tx) => memberStatement(tx, treasurer(), a1!.id, "2026-11-01", "2027-12-31"));
+    const balances = await withSociety(app.db, ids.socA, (tx) => memberBalances(tx, a1!.id));
+    for (const b of balances) expect(accounts.find((a) => a.code === b.code)!.closing, b.code).toBe(b.balance);
+    const savings = accounts.find((a) => a.code === "2100")!;
+    expect(savings.opening).toBe(parseNaira("10000")); // the October remittance, before the period
+    expect(savings.lines.every((l) => l.date >= "2026-11-01")).toBe(true);
+    await expect(withSociety(app.db, ids.socA, (tx) => memberStatement(tx, actor(["secretary"]), a1!.id, "2026-01-01", "2026-12-31"))).rejects.toBeInstanceOf(PermissionError);
+
+    const aging = await withSociety(app.db, ids.socA, (tx) => loanAging(tx, treasurer(), "2027-03-15"));
+    expect(aging.buckets.reduce((s, b) => s + b.outstanding, 0n)).toBe(aging.total);
+    expect(aging.loans.every((l) => l.position.daysPastDue > 30)).toBe(true); // the payroll loan's last instalment fell due in December
   });
 });

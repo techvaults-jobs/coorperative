@@ -56,7 +56,17 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
 
   return (
     <>
-      <PageHeader back={{ href: "/members", label: "Members" }} title={member.fullName} />
+      <PageHeader
+        back={{ href: "/members", label: "Members" }}
+        title={member.fullName}
+        actions={
+          balances && (
+            <Link href={`/members/${member.id}/statement`} className={buttonClass("secondary")}>
+              Statement
+            </Link>
+          )
+        }
+      />
       <Card>
         <CardBody className="flex flex-col gap-5 sm:flex-row sm:items-center">
           <Avatar name={member.fullName} size="xl" />
