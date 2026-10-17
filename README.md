@@ -3,7 +3,7 @@
 A configurable cooperative management platform for Nigerian cooperative societies.
 
 - **Discovery plan:** [docs/discovery](docs/discovery/README.md) · stakeholder PDF: [TechVaults-Cooperative-Discovery-Plan-v0.2.pdf](docs/TechVaults-Cooperative-Discovery-Plan-v0.2.pdf)
-- **Preview deployment (Railway):** https://web-production-0be64.up.railway.app (synthetic demo society only; no real member data)
+- **Preview deployment (Railway):** https://cooperative.up.railway.app (synthetic demo society only; no real member data)
   - Demo admin: `admin@demo.techvaults.local`; password is the `SEED_ADMIN_PASSWORD` variable on the Railway `web` service. Two-factor setup is required on first sign-in.
   - Entries need a second officer's approval (D-015). The demo admin is secretary, treasurer and auditor, so to try approvals, open **Officers**, invite a second email as Chairperson, and open the link in a private window.
 

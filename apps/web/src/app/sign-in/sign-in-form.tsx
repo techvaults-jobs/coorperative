@@ -20,7 +20,15 @@ export function SignInForm() {
     });
     if (result.error) {
       setPending(false);
-      setError(result.error.status === 429 ? "Too many attempts. Wait a minute and try again." : "That email and password don't match an account.");
+      const { status } = result.error;
+      // Only a 401 means the credentials were wrong; anything else is a problem on our side.
+      setError(
+        status === 401
+          ? "That email and password don't match an account."
+          : status === 429
+            ? "Too many attempts. Wait a minute and try again."
+            : `Sign-in isn't working right now (error ${status}). Try again shortly, or contact support.`,
+      );
       return;
     }
     // When two-factor is on, the client plugin redirects to /sign-in/verify instead.
