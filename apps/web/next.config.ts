@@ -4,6 +4,8 @@ const nextConfig: NextConfig = {
   // Workspace packages ship TypeScript source.
   transpilePackages: ["@techvaults/core", "@techvaults/db"],
   poweredByHeader: false,
+  // Payroll remittance files are uploaded through a server action.
+  experimental: { serverActions: { bodySizeLimit: "3mb" } },
   webpack(config) {
     // Workspace sources use NodeNext-style ".js" import specifiers for ".ts" files.
     config.resolve.extensionAlias = { ".js": [".ts", ".tsx", ".js"] };

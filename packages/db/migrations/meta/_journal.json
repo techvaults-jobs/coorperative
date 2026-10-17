@@ -43,6 +43,90 @@
       "when": 1792208576432,
       "tag": "0005_approval_guardrails",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792235891240,
+      "tag": "0006_society_configuration",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792237554322,
+      "tag": "0007_products_and_loans",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792237567149,
+      "tag": "0008_loan_guardrails",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792248251438,
+      "tag": "0009_payroll",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792248252191,
+      "tag": "0010_payroll_guardrails",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792249800233,
+      "tag": "0011_member_portal",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792249802262,
+      "tag": "0012_member_portal_guardrails",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792273676730,
+      "tag": "0013_demo_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792273677513,
+      "tag": "0014_demo_requests_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1792274641899,
+      "tag": "0015_platform_console",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1792275024411,
+      "tag": "0016_outbound_messages",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792275025182,
+      "tag": "0017_outbound_messages_grants",
+      "breakpoints": true
     }
   ]
 }

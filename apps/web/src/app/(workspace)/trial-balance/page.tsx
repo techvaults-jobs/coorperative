@@ -5,7 +5,7 @@ import { EmptyState, PageHeader } from "@/components/ui/page-header";
 import { Table, Td, Th } from "@/components/ui/table";
 import { hasPermission, inSociety, requireWorkspace } from "@/lib/session";
 
-export const metadata = { title: "Trial balance · TechVaults Cooperative" };
+export const metadata = { title: "Trial balance" };
 
 const CLASS_LABEL = { asset: "Asset", liability: "Liability", equity: "Equity", income: "Income", expense: "Expense" } as const;
 

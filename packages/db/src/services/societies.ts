@@ -7,13 +7,15 @@ export interface SocietyMembership {
   societyName: string;
   societySlug: string;
   roles: Role[];
+  /** The member record this person is in this society, if they use the member portal. */
+  memberId: string | null;
 }
 
 const KNOWN_ROLES = new Set<string>(ROLES);
 
 /** Societies a user belongs to, with their roles. Unknown role names are dropped, never trusted. */
 export async function listUserSocieties(db: Database, userId: string): Promise<SocietyMembership[]> {
-  const rows = await db.execute<{ society_id: string; society_name: string; society_slug: string; roles: string[] }>(
+  const rows = await db.execute<{ society_id: string; society_name: string; society_slug: string; roles: string[]; member_id: string | null }>(
     sql`select * from user_societies(${userId}::uuid)`,
   );
   return rows.map((r) => ({
@@ -21,5 +23,6 @@ export async function listUserSocieties(db: Database, userId: string): Promise<S
     societyName: r.society_name,
     societySlug: r.society_slug,
     roles: r.roles.filter((role): role is Role => KNOWN_ROLES.has(role)),
+    memberId: r.member_id,
   }));
 }

@@ -3,7 +3,7 @@ import { asc, eq, ilike, or } from "drizzle-orm";
 import type { Tx } from "../client.js";
 import { members } from "../schema.js";
 import { recordAudit } from "./audit.js";
-import { PermissionError, type Actor } from "./ledger.js";
+import { isSelf, PermissionError, type Actor } from "./ledger.js";
 
 export type Member = typeof members.$inferSelect;
 export type NewMember = Pick<Member, "memberNo" | "fullName"> &
@@ -30,7 +30,7 @@ export async function listMembers(tx: Tx, actor: Actor, opts: { search?: string 
 }
 
 export async function getMember(tx: Tx, actor: Actor, id: string): Promise<Member | undefined> {
-  if (!can(actor.roles, "members.read")) throw new PermissionError("Your role cannot view the member register");
+  if (!can(actor.roles, "members.read") && !isSelf(actor, id)) throw new PermissionError("Your role cannot view the member register");
   const [row] = await tx.select().from(members).where(eq(members.id, id));
   return row;
 }

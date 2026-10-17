@@ -20,6 +20,13 @@ export interface Actor {
   userId: string;
   societyId: string;
   roles: Role[];
+  /** Set when the person is also a member using the portal: the member record they are. */
+  memberId?: string | null;
+}
+
+/** True when the actor is the member in question, acting for themselves through the portal. */
+export function isSelf(actor: Actor, memberId: string): boolean {
+  return !!actor.memberId && actor.memberId === memberId && can(actor.roles, "self.read");
 }
 
 export class PermissionError extends Error {
@@ -71,6 +78,7 @@ async function insertSubmission(tx: Tx, actor: Actor, draft: EntryDraft & { reve
         side: l.side,
         amount: l.amount.toString(),
         ...(l.memberId ? { memberId: l.memberId } : {}),
+        ...(l.loanId ? { loanId: l.loanId } : {}),
         ...(l.memo ? { memo: l.memo } : {}),
       })),
       reversesEntryId: draft.reversesEntryId ?? null,
@@ -142,6 +150,7 @@ export async function requestReversal(
         side: l.side,
         amount: kobo(l.amount),
         ...(l.memberId ? { memberId: l.memberId } : {}),
+        ...(l.loanId ? { loanId: l.loanId } : {}),
         ...(l.memo ? { memo: l.memo } : {}),
       })),
       ...(original.policyVersionId ? { policyVersionId: original.policyVersionId } : {}),
@@ -197,6 +206,7 @@ export async function approveSubmission(tx: Tx, actor: Actor, submissionId: stri
       entryId: posted!.id,
       accountId: line.accountId,
       memberId: line.memberId ?? null,
+      loanId: line.loanId ?? null,
       side: line.side,
       amount: BigInt(line.amount),
       memo: line.memo ?? null,
@@ -217,7 +227,26 @@ export async function approveSubmission(tx: Tx, actor: Actor, submissionId: stri
       lines: submission.lines,
     },
   });
+  await settleLoans(tx, submission.id, submission.lines);
   return posted!;
+}
+
+/**
+ * Keep loan status in step with the ledger: a loan whose disbursement is posted becomes
+ * active, and an active loan whose principal is fully repaid closes.
+ */
+async function settleLoans(tx: Tx, submissionId: string, lines: { loanId?: string }[]) {
+  await tx.execute(sql`update loans set status = 'active' where disbursement_submission_id = ${submissionId} and status = 'disbursing'`);
+  await tx.execute(sql`update payroll_runs set status = 'posted' where submission_id = ${submissionId} and status = 'submitted'`);
+  const loanIds = [...new Set(lines.flatMap((l) => (l.loanId ? [l.loanId] : [])))];
+  if (loanIds.length === 0) return;
+  await tx.execute(sql`
+    update loans set status = 'closed', closed_at = now()
+    where id in ${loanIds} and status = 'active'
+      and (select coalesce(sum(case l.side when 'debit' then l.amount else -l.amount end), 0)
+           from journal_lines l join products p on p.account_id = l.account_id
+           where l.loan_id = loans.id and p.id = loans.product_id) <= 0
+  `);
 }
 
 /** Send a submission back to its preparer with a reason. Nothing is posted. */
@@ -240,6 +269,13 @@ async function decide(tx: Tx, actor: Actor, submissionId: string, status: "rejec
     .update(journalSubmissions)
     .set({ status, decidedBy: actor.userId, decidedAt: new Date(), decisionReason: reason })
     .where(eq(journalSubmissions.id, submissionId));
+  // A payroll run whose posting was turned down goes back to reconciled, to fix and resubmit.
+  await tx.execute(sql`update payroll_runs set status = 'reconciled', submission_id = null where submission_id = ${submissionId} and status = 'submitted'`);
+  // A loan whose disbursement was turned down can be disbursed again.
+  await tx.execute(sql`
+    update loans set status = 'approved', disbursement_submission_id = null, disbursed_on = null, first_due_date = null
+    where disbursement_submission_id = ${submissionId} and status = 'disbursing'
+  `);
   await recordAudit(tx, {
     societyId: actor.societyId,
     actorId: actor.userId,
@@ -248,6 +284,13 @@ async function decide(tx: Tx, actor: Actor, submissionId: string, status: "rejec
     entityId: submissionId,
     ...(reason ? { reason } : {}),
   });
+}
+
+/** Number of posted entries in the society in scope. */
+export async function countJournal(tx: Tx, actor: Actor): Promise<number> {
+  if (!can(actor.roles, "ledger.read")) throw new PermissionError("Your role cannot view the ledger");
+  const [row] = await tx.execute<{ n: number }>(sql`select count(*)::int as n from journal_entries`);
+  return Number(row?.n ?? 0);
 }
 
 export interface SubmissionView {
@@ -431,8 +474,8 @@ export interface JournalView {
 }
 
 /** Most recent journal entries with their lines, newest first. */
-export async function listJournal(tx: Tx, actor: Actor, opts: { limit?: number; memberId?: string } = {}): Promise<JournalView[]> {
-  if (!can(actor.roles, "ledger.read") && !opts.memberId) throw new PermissionError("Your role cannot view the ledger");
+export async function listJournal(tx: Tx, actor: Actor, opts: { limit?: number; offset?: number; memberId?: string } = {}): Promise<JournalView[]> {
+  if (!can(actor.roles, "ledger.read") && !(opts.memberId && isSelf(actor, opts.memberId))) throw new PermissionError("Your role cannot view the ledger");
   const limit = Math.min(opts.limit ?? 50, 200);
   const entries = await tx.execute<{
     id: string;
@@ -453,7 +496,7 @@ export async function listJournal(tx: Tx, actor: Actor, opts: { limit?: number; 
     left join journal_entries r on r.reverses_entry_id = e.id
     where ${opts.memberId ? sql`exists (select 1 from journal_lines l where l.entry_id = e.id and l.member_id = ${opts.memberId})` : sql`true`}
     order by e.entry_no desc
-    limit ${limit}
+    limit ${limit} offset ${Math.max(0, Math.floor(opts.offset ?? 0))}
   `);
   if (entries.length === 0) return [];
   const ids = entries.map((e) => e.id);

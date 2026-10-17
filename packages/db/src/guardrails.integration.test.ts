@@ -29,12 +29,30 @@ import {
   type Actor,
 } from "./services/ledger.js";
 import { createMember, listMembers, updateMember } from "./services/members.js";
+import { createSociety, listPlatformSocieties } from "./services/platform.js";
+import { importMembers, previewMemberImport, previewOpeningBalances, submitOpeningBalances } from "./services/importing.js";
+import { financialPosition, incomeStatement, memberCounts, memberStatement, monthlyFlows } from "./services/reports.js";
+import { createAccount, getSocietySettings, setAccountActive, updateSocietySettings } from "./services/settings.js";
+import { approveProductPolicy, listProducts, proposePolicyChange, proposeProduct } from "./services/products.js";
+import { applyForLoan, decideLoan, disburseLoan, getLoan, listLoans, loanAging, loanEligibility, loanPosition, recordRepayment } from "./services/loans.js";
+import { DEFAULT_LOAN_POLICY, DEFAULT_SAVINGS_POLICY, DEFAULT_SHARES_POLICY, kobo } from "@techvaults/core";
+import {
+  createPayrollRun,
+  importRemittance,
+  issuePayrollRun,
+  payrollReconciliation,
+  payrollSchedule,
+  setContribution,
+  submitPayrollRun,
+} from "./services/payroll.js";
 import {
   acceptInvitation,
   changeOfficerRoles,
   findInvitation,
+  inviteMember,
   inviteOfficer,
   listOfficers,
+  listOpenInvitations,
   removeOfficer,
   revokeInvitation,
 } from "./services/officers.js";
@@ -370,7 +388,7 @@ describe.runIf(ADMIN)("database guardrails", () => {
       { societyId: ids.socB, userId: ids.chair, roles: ["chairperson"] },
     ]);
     const mine = await listUserSocieties(app.db, ids.treasurer);
-    expect(mine).toEqual([{ societyId: ids.socA, societyName: "Unilag Staff Cooperative (test)", societySlug: "test-a", roles: ["treasurer"] }]);
+    expect(mine).toEqual([{ societyId: ids.socA, societyName: "Unilag Staff Cooperative (test)", societySlug: "test-a", roles: ["treasurer"], memberId: null }]);
     // Direct reads are still limited by row-level security.
     expect(await app.db.select().from(schema.societyUsers)).toEqual([]);
   });
@@ -437,5 +455,348 @@ describe.runIf(ADMIN)("database guardrails", () => {
     const events = await withSociety(app.db, ids.socA, (tx) => listAuditEvents(tx, ids.socA));
     expect(events.slice(0, 2).map((e) => e.action)).toEqual(["officer.removed", "officer.roles_changed"]);
     expect(await withSociety(app.db, ids.socA, (tx) => verifySocietyAuditChain(tx, ids.socA))).toMatchObject({ ok: false }); // tampered earlier in this suite
+  });
+
+  it("reports monthly flows from posted entries, ignoring reversed pairs", async () => {
+    const flows = await withSociety(app.db, ids.socA, (tx) => monthlyFlows(tx, treasurer(), { months: 3, asOf: "2026-11-15" }));
+    expect(flows.map((f) => f.month)).toEqual(["2026-09-01", "2026-10-01", "2026-11-01"]);
+    // October: the A-001 payroll remittance credited ₦10,000 savings + ₦5,000 shares to the member.
+    expect(flows[1]!.contributions).toBe(parseNaira("15000"));
+    expect(flows[2]!.contributions).toBe(0n);
+    const counts = await withSociety(app.db, ids.socA, (tx) => memberCounts(tx, actor(["secretary"])));
+    expect(counts).toEqual({ total: 1, byStatus: { active: 1 } });
+    await expect(withSociety(app.db, ids.socA, (tx) => monthlyFlows(tx, actor(["secretary"])))).rejects.toBeInstanceOf(PermissionError);
+  });
+
+  it("configures a society by sector, words, colour and modules, with an audit diff", async () => {
+    const secretary = actor(["secretary"]);
+    const start = await withSociety(app.db, ids.socA, (tx) => getSocietySettings(tx, treasurer()));
+    expect(start).toMatchObject({ sector: "workplace", terminology: { externalId: "Staff ID" }, modulesCustomised: false });
+
+    const after = await withSociety(app.db, ids.socA, (tx) =>
+      updateSocietySettings(tx, secretary, { sector: "agricultural", terminology: { group: "Village" }, brandColor: "#1D5FAE", modules: ["savings", "loans"] }),
+    );
+    expect(after).toMatchObject({
+      sector: "agricultural",
+      brandColor: "#1d5fae",
+      terminology: { externalId: "Farmer ID", group: "Village", contribution: "Contribution" },
+      modules: ["savings", "loans"],
+      modulesCustomised: true,
+    });
+    await expect(withSociety(app.db, ids.socA, (tx) => updateSocietySettings(tx, secretary, { brandColor: "#ffee00" }))).rejects.toThrow(/too light/);
+    await expect(withSociety(app.db, ids.socA, (tx) => updateSocietySettings(tx, treasurer(), { name: "Hijack" }))).rejects.toBeInstanceOf(PermissionError);
+    // The database refuses a malformed colour even if the app is bypassed.
+    await rejectsWith(withSociety(app.db, ids.socA, (tx) => tx.execute(sql`update societies set brand_color = 'red'`)), /societies_brand_color/);
+
+    const reset = await withSociety(app.db, ids.socA, (tx) => updateSocietySettings(tx, secretary, { modules: null }));
+    expect(reset.modules).toEqual(["savings", "shares", "loans", "levies"]); // agricultural defaults
+    const [event] = await withSociety(app.db, ids.socA, (tx) => listAuditEvents(tx, ids.socA, 1));
+    expect(event).toMatchObject({ action: "society.settings_changed", before: { modules: ["savings", "loans"] }, after: { modules: null } });
+    // Society B is untouched.
+    const [b] = (await admin`select sector, brand_color from societies where id = ${ids.socB}`) as unknown as [{ sector: string; brand_color: string | null }];
+    expect(b).toEqual({ sector: "workplace", brand_color: null });
+  });
+
+  it("manages the chart of accounts; inactive accounts can't take new entries", async () => {
+    const account = await withSociety(app.db, ids.socA, (tx) => createAccount(tx, treasurer(), { code: "5300", name: "Meeting expenses", class: "expense" }));
+    await expect(withSociety(app.db, ids.socA, (tx) => createAccount(tx, treasurer(), { code: "5300", name: "Duplicate", class: "expense" }))).rejects.toThrow(/already in use/);
+    await expect(withSociety(app.db, ids.socA, (tx) => createAccount(tx, treasurer(), { code: "1500", name: "Wrong class", class: "income" }))).rejects.toThrow(/asset accounts/);
+    await expect(withSociety(app.db, ids.socA, (tx) => createAccount(tx, actor(["secretary"]), { code: "5400", name: "Nope", class: "expense" }))).rejects.toBeInstanceOf(PermissionError);
+    await withSociety(app.db, ids.socA, (tx) => setAccountActive(tx, treasurer(), account.id, false));
+    await expect(
+      withSociety(app.db, ids.socA, (tx) =>
+        submitJournalEntry(tx, treasurer(), {
+          ...fee("inactive-account"),
+          lines: [
+            { accountId: account.id, side: "debit", amount: parseNaira("1") },
+            { accountId: ids.bank, side: "credit", amount: parseNaira("1") },
+          ],
+        }),
+      ),
+    ).rejects.toThrow(/active accounts/);
+  });
+
+  it("runs a loan from product approval to closure, with maker-checker at every step", async () => {
+    const secretary = actor(["secretary"], ids.treasurer);
+    const committee = actor(["chairperson"], ids.chair);
+    const loanAcct = await withSociety(app.db, ids.socA, (tx) => createAccount(tx, treasurer(), { code: "1300", name: "Members' loans", class: "asset", isMemberControl: true }));
+    const interestAcct = await withSociety(app.db, ids.socA, (tx) => createAccount(tx, treasurer(), { code: "4200", name: "Interest on loans", class: "income" }));
+    const policy = { ...DEFAULT_LOAN_POLICY, minMembershipMonths: 0, savingsMultiple: 3, guarantorsRequired: 1, minAmount: parseNaira("5000"), maxAmount: parseNaira("500000"), minTermMonths: 1 };
+
+    // Product: proposed by one officer, approved by another.
+    const productId = await withSociety(app.db, ids.socA, (tx) =>
+      proposeProduct(tx, secretary, { kind: "loan", code: "reg-loan", name: "Regular loan", accountId: loanAcct.id, incomeAccountId: interestAcct.id, policy }),
+    );
+    await expect(withSociety(app.db, ids.socA, (tx) => approveProductPolicy(tx, actor(["secretary", "chairperson"], ids.treasurer), productId))).rejects.toThrow(/proposed this cannot/);
+    await withSociety(app.db, ids.socA, (tx) => approveProductPolicy(tx, committee, productId));
+    const [product] = await withSociety(app.db, ids.socA, (tx) => listProducts(tx, treasurer(), { kind: "loan" }));
+    expect(product).toMatchObject({ code: "REG-LOAN", status: "active", version: 1 });
+
+    const [borrower] = await withSociety(app.db, ids.socA, (tx) => listMembers(tx, actor(["secretary"])));
+    const guarantor = await withSociety(app.db, ids.socA, (tx) => createMember(tx, actor(["secretary"]), { memberNo: "A-002", fullName: "Guarantor Member", status: "active" }));
+
+    // Eligibility: savings ₦10,000 × 3 = ₦30,000 limit.
+    const preview = await withSociety(app.db, ids.socA, (tx) => loanEligibility(tx, treasurer(), { memberId: borrower!.id, productId, amount: parseNaira("50000"), termMonths: 4, guarantors: 1 }));
+    expect(preview.eligible).toBe(false);
+    expect(preview.savings).toBe(parseNaira("10000"));
+    await expect(
+      withSociety(app.db, ids.socA, (tx) => applyForLoan(tx, treasurer(), { memberId: borrower!.id, productId, amount: parseNaira("50000"), termMonths: 4, purpose: "School fees", guarantorIds: [guarantor.id] })),
+    ).rejects.toThrow(/at most 3× savings/);
+
+    const loan = await withSociety(app.db, ids.socA, (tx) =>
+      applyForLoan(tx, treasurer(), { memberId: borrower!.id, productId, amount: parseNaira("20000"), termMonths: 4, purpose: "School fees", guarantorIds: [guarantor.id] }),
+    );
+    expect(loan.loanNo).toBe(1);
+    await expect(withSociety(app.db, ids.socA, (tx) => decideLoan(tx, actor(["treasurer", "chairperson"]), loan.id, "approve", ""))).rejects.toThrow(/recorded this application/);
+    await withSociety(app.db, ids.socA, (tx) => decideLoan(tx, committee, loan.id, "approve", "Within policy"));
+
+    // Disbursement is a journal submission; the loan goes live only when it's approved.
+    const { submissionId } = await withSociety(app.db, ids.socA, (tx) =>
+      disburseLoan(tx, treasurer(), loan.id, { disbursedOn: "2026-11-01", firstDueDate: "2026-11-30", bankAccountId: ids.bank, idempotencyKey: "disburse-1" }),
+    );
+    expect((await withSociety(app.db, ids.socA, (tx) => getLoan(tx, treasurer(), loan.id)))!.status).toBe("disbursing");
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, committee, submissionId));
+    let detail = (await withSociety(app.db, ids.socA, (tx) => getLoan(tx, treasurer(), loan.id)))!;
+    expect(detail.status).toBe("active");
+    expect(detail.position.principalOutstanding).toBe(parseNaira("20000"));
+    const first = detail.position.schedule!.instalments[0]!;
+    expect(first.interest).toBe(parseNaira("200")); // 1% a month on ₦20,000
+    const [bankLine] = (await admin`select amount from journal_lines where entry_id = (select id from journal_entries where submission_id = ${submissionId}) and account_id = ${ids.bank}`) as unknown as [{ amount: string }];
+    expect(BigInt(bankLine.amount)).toBe(parseNaira("19800")); // 1% processing fee deducted
+
+    // A missed instalment shows as arrears.
+    const late = await withSociety(app.db, ids.socA, async (tx) => loanPosition(tx, (await tx.select().from(schema.loans).where(sql`id = ${loan.id}`))[0]!, "2026-12-15"));
+    expect(late.arrears).toBe(first.payment);
+    expect(late.daysPastDue).toBe(15);
+
+    // Repayment: interest first, then principal; approved by another officer.
+    const repay = await withSociety(app.db, ids.socA, (tx) => recordRepayment(tx, treasurer(), loan.id, { amount: first.payment, paidOn: "2026-11-30", bankAccountId: ids.bank, idempotencyKey: "repay-1" }));
+    expect(repay.interest).toBe(parseNaira("200"));
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, committee, repay.submissionId));
+    detail = (await withSociety(app.db, ids.socA, (tx) => getLoan(tx, treasurer(), loan.id)))!;
+    expect(detail.position.principalOutstanding).toBe(kobo(parseNaira("20000") - first.principal));
+    expect(detail.position.interestPaid).toBe(parseNaira("200"));
+
+    // The database ties loan lines to the borrower.
+    const s2 = await withSociety(app.db, ids.socA, (tx) => submitJournalEntry(tx, treasurer(), fee("raw-loan-line")));
+    await rejectsWith(
+      withSociety(app.db, ids.socA, async (tx) => {
+        await tx.update(schema.journalSubmissions).set({ status: "approved", decidedBy: ids.chair, decidedAt: new Date() }).where(sql`id = ${s2.id}`);
+        const [e] = await tx
+          .insert(schema.journalEntries)
+          .values({ societyId: ids.socA, entryDate: "2026-10-31", description: "Entrance fee – raw-loan-line", idempotencyKey: "raw-loan-line", submissionId: s2.id, preparedBy: ids.treasurer, postedBy: ids.chair })
+          .returning();
+        await tx.insert(schema.journalLines).values([
+          { societyId: ids.socA, entryId: e!.id, accountId: loanAcct.id, memberId: guarantor.id, loanId: loan.id, side: "debit", amount: 100n },
+          { societyId: ids.socA, entryId: e!.id, accountId: ids.bank, side: "credit", amount: 100n },
+        ]);
+      }),
+      /may only name the borrowing member/,
+    );
+
+    // Paying off the rest closes the loan.
+    const rest = await withSociety(app.db, ids.socA, (tx) =>
+      recordRepayment(tx, treasurer(), loan.id, { amount: detail.position.principalOutstanding, paidOn: "2026-11-30", bankAccountId: ids.bank, idempotencyKey: "repay-2" }),
+    );
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, committee, rest.submissionId));
+    expect((await withSociety(app.db, ids.socA, (tx) => getLoan(tx, treasurer(), loan.id)))!.status).toBe("closed");
+
+    // A policy change doesn't touch existing loans: they keep their snapshot.
+    await withSociety(app.db, ids.socA, (tx) => proposePolicyChange(tx, secretary, productId, { kind: "loan", policy: { ...policy, annualRateBps: 1800 } }));
+    await withSociety(app.db, ids.socA, (tx) => approveProductPolicy(tx, committee, productId));
+    const after = (await withSociety(app.db, ids.socA, (tx) => getLoan(tx, treasurer(), loan.id)))!;
+    expect(after.policy.annualRateBps).toBe(1200);
+    expect(after.policyVersion).toBe(1);
+  });
+
+  it("runs a month of payroll deductions from schedule to posting", async () => {
+    const secretary = actor(["secretary"], ids.treasurer);
+    const committee = actor(["chairperson"], ids.chair);
+    const savingsId = await withSociety(app.db, ids.socA, (tx) => proposeProduct(tx, secretary, { kind: "savings", code: "ORD-SAV", name: "Ordinary savings", accountId: ids.savings, policy: DEFAULT_SAVINGS_POLICY }));
+    const sharesId = await withSociety(app.db, ids.socA, (tx) => proposeProduct(tx, secretary, { kind: "shares", code: "ORD-SHR", name: "Ordinary shares", accountId: ids.shares, policy: DEFAULT_SHARES_POLICY }));
+    for (const id of [savingsId, sharesId]) await withSociety(app.db, ids.socA, (tx) => approveProductPolicy(tx, committee, id));
+    const people = await withSociety(app.db, ids.socA, (tx) => listMembers(tx, actor(["secretary"])));
+    const a1 = people.find((m) => m.memberNo === "A-001")!;
+    const a2 = people.find((m) => m.memberNo === "A-002")!;
+    await withSociety(app.db, ids.socA, async (tx) => {
+      await setContribution(tx, treasurer(), a1.id, savingsId, parseNaira("10000"));
+      await setContribution(tx, treasurer(), a1.id, sharesId, parseNaira("5000"));
+      await setContribution(tx, treasurer(), a2.id, savingsId, parseNaira("3000"));
+    });
+
+    // A running loan with instalments due in October and November.
+    const [loanProduct] = await withSociety(app.db, ids.socA, (tx) => listProducts(tx, treasurer(), { kind: "loan" }));
+    const loan = await withSociety(app.db, ids.socA, (tx) =>
+      applyForLoan(tx, treasurer(), { memberId: a1.id, productId: loanProduct!.id, amount: parseNaira("12000"), termMonths: 3, purpose: "Rent", guarantorIds: [a2.id] }),
+    );
+    await withSociety(app.db, ids.socA, (tx) => decideLoan(tx, committee, loan.id, "approve", ""));
+    const d = await withSociety(app.db, ids.socA, (tx) => disburseLoan(tx, treasurer(), loan.id, { disbursedOn: "2026-10-01", firstDueDate: "2026-10-31", bankAccountId: ids.bank, idempotencyKey: "pay-disburse" }));
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, committee, d.submissionId));
+
+    const runId = await withSociety(app.db, ids.socA, (tx) => createPayrollRun(tx, treasurer(), { period: "2026-11", strategy: "loans_first" }));
+    await expect(withSociety(app.db, ids.socA, (tx) => createPayrollRun(tx, treasurer(), { period: "2026-11", strategy: "loans_first" }))).rejects.toThrow(/already a run/);
+    await expect(withSociety(app.db, ids.socA, (tx) => createPayrollRun(tx, actor(["auditor"], ids.auditor), { period: "2026-12", strategy: "pro_rata" }))).rejects.toBeInstanceOf(PermissionError);
+    const schedule = await withSociety(app.db, ids.socA, (tx) => payrollSchedule(tx, treasurer(), runId));
+    const s1 = schedule.find((r) => r.memberId === a1.id)!;
+    const twoInstalments = (await withSociety(app.db, ids.socA, (tx) => getLoan(tx, treasurer(), loan.id)))!.position.schedule!.instalments.slice(0, 2).reduce((s, i) => s + i.payment, 0n);
+    expect(s1).toMatchObject({ savings: parseNaira("10000"), shares: parseNaira("5000"), loans: twoInstalments });
+    expect(schedule.find((r) => r.memberId === a2.id)!.total).toBe(parseNaira("3000"));
+    await withSociety(app.db, ids.socA, (tx) => issuePayrollRun(tx, treasurer(), runId));
+
+    // A file with a bad line is refused whole.
+    const bad = await withSociety(app.db, ids.socA, (tx) => importRemittance(tx, treasurer(), runId, "Staff ID,Amount\nUL/2231,lots\n", "2026-11-28"));
+    expect(bad.errors).toHaveLength(1);
+
+    // A-001 pays ₦5,000 short; A-002 is missing; one line isn't anyone's.
+    const paid = kobo(s1.total - parseNaira("5000"));
+    const csv = `Staff ID,Name,Amount\nul/2231,"Okafor, Adaeze",${(Number(paid) / 100).toFixed(2)}\nZZ/9999,Unknown,700\n`;
+    const result = await withSociety(app.db, ids.socA, (tx) => importRemittance(tx, treasurer(), runId, csv, "2026-11-28"));
+    expect(result).toMatchObject({ lines: 2, matched: 1, unmatched: 1, errors: [] });
+    const recon = await withSociety(app.db, ids.socA, (tx) => payrollReconciliation(tx, treasurer(), runId));
+    expect(Object.fromEntries(recon.rows.map((r) => [r.memberNo, r.status]))).toEqual({ "A-001": "short", "A-002": "missing" });
+    expect(recon.unmatched).toEqual([{ line: 3, externalId: "ZZ/9999", name: "Unknown", amount: parseNaira("700") }]);
+    expect(recon.totals.shortfall).toBe(parseNaira("8000"));
+
+    // Posting needs a second officer; the loan and suspense move only when it's approved.
+    const { submissionId } = await withSociety(app.db, ids.socA, (tx) => submitPayrollRun(tx, treasurer(), runId, { bankAccountId: ids.bank, idempotencyKey: "payroll-2026-11" }));
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, committee, submissionId));
+    const [run] = (await admin`select status from payroll_runs where id = ${runId}`) as unknown as [{ status: string }];
+    expect(run.status).toBe("posted");
+    const after = (await withSociety(app.db, ids.socA, (tx) => getLoan(tx, treasurer(), loan.id)))!;
+    expect(after.position.arrears).toBe(0n); // loans first: both instalments were met
+    const tb = await withSociety(app.db, ids.socA, (tx) => trialBalance(tx));
+    expect(tb.find((r) => r.code === "2900")!.balance).toBe(parseNaira("700"));
+    expect(tb.reduce((s, r) => s + r.debit, 0n)).toBe(tb.reduce((s, r) => s + r.credit, 0n));
+    // A posted run is history.
+    await rejectsWith(withSociety(app.db, ids.socA, (tx) => tx.execute(sql`delete from payroll_items where run_id = ${runId}`)), /can no longer change/);
+  });
+
+  it("produces financial statements that agree with the ledger", async () => {
+    const tb = await withSociety(app.db, ids.socA, (tx) => trialBalance(tx));
+    const position = await withSociety(app.db, ids.socA, (tx) => financialPosition(tx, treasurer(), "2027-12-31"));
+    expect(position.balanced).toBe(true);
+    expect(position.totals.assets).toBe(tb.filter((r) => r.class === "asset").reduce((s, r) => s + r.balance, 0n));
+    const statement = await withSociety(app.db, ids.socA, (tx) => incomeStatement(tx, treasurer(), "2000-01-01", "2027-12-31"));
+    const tbSurplus = tb.filter((r) => r.class === "income").reduce((s, r) => s + r.balance, 0n) - tb.filter((r) => r.class === "expense").reduce((s, r) => s + r.balance, 0n);
+    expect(statement.totals.surplus).toBe(tbSurplus);
+    expect(position.surplus).toBe(tbSurplus);
+    expect(statement.statutoryReserve).toBe(kobo((tbSurplus * 25n + 50n) / 100n));
+    // A period excludes what falls outside it.
+    const before = await withSociety(app.db, ids.socA, (tx) => incomeStatement(tx, treasurer(), "2000-01-01", "2000-12-31"));
+    expect(before.totals.surplus).toBe(0n);
+
+    // A member statement's closing balances equal the member's balances; the period splits opening from movements.
+    const [a1] = (await withSociety(app.db, ids.socA, (tx) => listMembers(tx, actor(["secretary"])))).filter((m) => m.memberNo === "A-001");
+    const accounts = await withSociety(app.db, ids.socA, (tx) => memberStatement(tx, treasurer(), a1!.id, "2026-11-01", "2027-12-31"));
+    const balances = await withSociety(app.db, ids.socA, (tx) => memberBalances(tx, a1!.id));
+    for (const b of balances) expect(accounts.find((a) => a.code === b.code)!.closing, b.code).toBe(b.balance);
+    const savings = accounts.find((a) => a.code === "2100")!;
+    expect(savings.opening).toBe(parseNaira("10000")); // the October remittance, before the period
+    expect(savings.lines.every((l) => l.date >= "2026-11-01")).toBe(true);
+    await expect(withSociety(app.db, ids.socA, (tx) => memberStatement(tx, actor(["secretary"]), a1!.id, "2026-01-01", "2026-12-31"))).rejects.toBeInstanceOf(PermissionError);
+
+    const aging = await withSociety(app.db, ids.socA, (tx) => loanAging(tx, treasurer(), "2027-03-15"));
+    expect(aging.buckets.reduce((s, b) => s + b.outstanding, 0n)).toBe(aging.total);
+    expect(aging.loans.every((l) => l.position.daysPastDue > 30)).toBe(true); // the payroll loan's last instalment fell due in December
+  });
+
+  it("gives a member portal access to their own records only", async () => {
+    const secretary = actor(["secretary"], ids.treasurer);
+    const people = await withSociety(app.db, ids.socA, (tx) => listMembers(tx, actor(["secretary"])));
+    const a1 = people.find((m) => m.memberNo === "A-001")!;
+    const a2 = people.find((m) => m.memberNo === "A-002")!;
+    const invite = await withSociety(app.db, ids.socA, (tx) => inviteMember(tx, secretary, a1.id, "adaeze@example.ng"));
+    const found = await findInvitation(app.db, invite.token);
+    expect(found).toMatchObject({ status: "valid", roles: ["member"], memberId: a1.id });
+    // Member invitations don't clutter the officers' list.
+    expect((await withSociety(app.db, ids.socA, (tx) => listOpenInvitations(tx, secretary))).some((i) => i.email === "adaeze@example.ng")).toBe(false);
+    const [portalUser] = await adminDb.insert(schema.users).values({ email: "adaeze@example.ng", name: "Adaeze (portal)" }).returning();
+    if (found.status !== "valid") throw new Error("unreachable");
+    await withSociety(app.db, ids.socA, (tx) => acceptInvitation(tx, found.id, { id: portalUser!.id, email: "adaeze@example.ng" }));
+    const [membership] = await listUserSocieties(app.db, portalUser!.id);
+    expect(membership).toMatchObject({ roles: ["member"], memberId: a1.id });
+    await expect(withSociety(app.db, ids.socA, (tx) => inviteMember(tx, secretary, a1.id, "other@example.ng"))).rejects.toThrow(/already has portal access/);
+    // The database won't hold a member role without its member record.
+    await rejectsWith(adminDb.insert(schema.societyUsers).values({ societyId: ids.socA, userId: ids.auditor, roles: ["member"] }), /society_users_member_role/);
+
+    const me: Actor = { userId: portalUser!.id, societyId: ids.socA, roles: ["member"], memberId: a1.id };
+    const own = await withSociety(app.db, ids.socA, (tx) => memberStatement(tx, me, a1.id, "2026-01-01", "2027-12-31"));
+    expect(own.length).toBeGreaterThan(0);
+    await expect(withSociety(app.db, ids.socA, (tx) => memberStatement(tx, me, a2.id, "2026-01-01", "2027-12-31"))).rejects.toBeInstanceOf(PermissionError);
+    await expect(withSociety(app.db, ids.socA, (tx) => listJournal(tx, me, { memberId: a2.id }))).rejects.toBeInstanceOf(PermissionError);
+    await expect(withSociety(app.db, ids.socA, (tx) => listJournal(tx, me))).rejects.toBeInstanceOf(PermissionError);
+    const loansSeen = await withSociety(app.db, ids.socA, (tx) => listLoans(tx, me));
+    expect(loansSeen.length).toBeGreaterThan(0);
+    expect(loansSeen.every((l) => l.memberId === a1.id)).toBe(true);
+    await expect(withSociety(app.db, ids.socA, (tx) => listMembers(tx, me))).rejects.toBeInstanceOf(PermissionError);
+
+    // A member may apply for themselves, never for someone else; an officer decides.
+    const [loanProduct] = await withSociety(app.db, ids.socA, (tx) => listProducts(tx, me, { kind: "loan" }));
+    await expect(
+      withSociety(app.db, ids.socA, (tx) => applyForLoan(tx, me, { memberId: a2.id, productId: loanProduct!.id, amount: parseNaira("5000"), termMonths: 2, purpose: "Not mine", guarantorIds: [a1.id] })),
+    ).rejects.toBeInstanceOf(PermissionError);
+    const check = await withSociety(app.db, ids.socA, (tx) => loanEligibility(tx, me, { memberId: a1.id, productId: loanProduct!.id, amount: parseNaira("5000"), termMonths: 2, guarantors: 1 }));
+    expect(check.checks.find((c) => c.key === "running")!.ok).toBe(false); // the payroll-month loan is still running
+    await expect(
+      withSociety(app.db, ids.socA, (tx) => loanEligibility(tx, me, { memberId: a2.id, productId: loanProduct!.id, amount: parseNaira("5000"), termMonths: 2, guarantors: 1 })),
+    ).rejects.toBeInstanceOf(PermissionError);
+    await expect(
+      withSociety(app.db, ids.socA, (tx) => applyForLoan(tx, me, { memberId: a1.id, productId: loanProduct!.id, amount: parseNaira("5000"), termMonths: 2, purpose: "School books", guarantorIds: [a2.id] })),
+    ).rejects.toThrow(/running loan/);
+  });
+
+  it("lets TechVaults staff onboard a society, seeing counts but not finances", async () => {
+    const input = { name: "Kano Traders Thrift Society (test)", state: "Kano", registrar: "Kano State Director of Co-operatives", sector: "market", secretaryEmail: "Sec@Example.ng" };
+    await expect(createSociety(app.db, ids.treasurer, input)).rejects.toBeInstanceOf(PermissionError);
+    await expect(listPlatformSocieties(app.db, ids.treasurer)).rejects.toThrow(/Platform staff only|platform staff/i);
+    await admin`update users set is_platform_staff = true where id = ${ids.auditor}`;
+    const created = await createSociety(app.db, ids.auditor, input);
+    const again = await createSociety(app.db, ids.auditor, { ...input, secretaryEmail: "other@example.ng" });
+    const [a, b] = (await admin`select slug from societies where id in (${created.societyId}, ${again.societyId}) order by created_at`) as unknown as { slug: string }[];
+    expect(a!.slug).toBe("kano-traders-thrift-society-test");
+    expect(b!.slug).not.toBe(a!.slug);
+    const accounts = (await admin`select code from ledger_accounts where society_id = ${created.societyId} order by code`) as unknown as { code: string }[];
+    expect(accounts.map((x) => x.code)).toContain("4300"); // market levies
+    expect(accounts.map((x) => x.code)).toContain("3900");
+    const invite = await findInvitation(app.db, created.token);
+    expect(invite).toMatchObject({ status: "valid", email: "sec@example.ng", roles: ["secretary"], societyId: created.societyId });
+    const list = await listPlatformSocieties(app.db, ids.auditor);
+    expect(list.find((x) => x.id === created.societyId)).toMatchObject({ sector: "market", members: 0, officers: 0 });
+    expect(list.find((x) => x.id === ids.socA)!.members).toBeGreaterThan(0);
+    // The summary carries no money fields.
+    expect(Object.keys(list[0]!)).not.toContain("balance");
+    await admin`update users set is_platform_staff = false where id = ${ids.auditor}`;
+  });
+
+  it("imports a member register and opening balances, all or nothing", async () => {
+    const secretary = actor(["secretary"]);
+    const bad = "Member no,Full name,Staff ID,Joined\nA-001,Clash With Existing,,05/01/2024\nIMP-01,Ngozi Obi,UL/9001,05/01/2024\nIMP-02,Sule Hassan,UL/9002,\n";
+    const preview = await withSociety(app.db, ids.socA, (tx) => previewMemberImport(tx, secretary, bad));
+    expect(preview.rows.map((r) => r.memberNo)).toEqual(["IMP-01", "IMP-02"]);
+    expect(preview.issues).toEqual([{ line: 2, message: "member no A-001 is already on the register" }]);
+    await expect(withSociety(app.db, ids.socA, (tx) => importMembers(tx, secretary, bad))).rejects.toThrow(/nothing was imported/);
+    await expect(withSociety(app.db, ids.socA, (tx) => importMembers(tx, treasurer(), bad))).rejects.toBeInstanceOf(PermissionError);
+    const good = bad.split("\n").filter((l) => !l.startsWith("A-001")).join("\n");
+    expect(await withSociety(app.db, ids.socA, (tx) => importMembers(tx, secretary, good))).toBe(2);
+    const imported = (await withSociety(app.db, ids.socA, (tx) => listMembers(tx, secretary))).filter((m) => m.memberNo.startsWith("IMP-"));
+    expect(imported.map((m) => [m.memberNo, m.staffId, m.joinedOn])).toEqual([["IMP-01", "UL/9001", "2024-01-05"], ["IMP-02", "UL/9002", null]]);
+
+    // Opening balances: savings and shares only, every member must exist.
+    const withLoan = "Member no,2100,3100,1300\nIMP-01,50000,10000,\nIMP-02,25000.50,,\nNOPE,1,,\n";
+    const p1 = await withSociety(app.db, ids.socA, (tx) => previewOpeningBalances(tx, treasurer(), withLoan));
+    expect(p1.issues.map((i) => i.message).join(" ")).toMatch(/1300.*Loan balances come across with their loans.*NOPE isn't on the register/s);
+    const csv = "Member no,2100,3100\nIMP-01,50000,10000\nIMP-02,25000.50,\n";
+    const p2 = await withSociety(app.db, ids.socA, (tx) => previewOpeningBalances(tx, treasurer(), csv));
+    expect(p2.issues).toEqual([]);
+    expect(p2.total).toBe(parseNaira("85000.50"));
+    const s = await withSociety(app.db, ids.socA, (tx) => submitOpeningBalances(tx, treasurer(), csv, "2026-09-30"));
+    const again = await withSociety(app.db, ids.socA, (tx) => submitOpeningBalances(tx, treasurer(), csv, "2026-09-30"));
+    expect(again).toMatchObject({ id: s.id, created: false }); // the same file can't be brought across twice
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, actor(["chairperson"], ids.chair), s.id));
+    const ngozi = imported[0]!;
+    const balances = await withSociety(app.db, ids.socA, (tx) => memberBalances(tx, ngozi.id));
+    expect(balances.map((b) => [b.code, b.balance])).toEqual([["2100", parseNaira("50000")], ["3100", parseNaira("10000")]]);
+    const tb = await withSociety(app.db, ids.socA, (tx) => trialBalance(tx));
+    expect(tb.find((r) => r.code === "3900")!.balance).toBe(kobo(-parseNaira("85000.50")));
   });
 });

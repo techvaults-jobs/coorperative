@@ -5,6 +5,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { nextCookies } from "better-auth/next-js";
 import { twoFactor } from "better-auth/plugins";
 import { db } from "./db";
+import { mails, sendMail } from "./mail";
 
 function createAuth() {
   return betterAuth({
@@ -22,7 +23,16 @@ function createAuth() {
       },
     }),
     // Societies invite their officers; nobody can create an account from the sign-in page.
-    emailAndPassword: { enabled: true, disableSignUp: true, minPasswordLength: 12 },
+    emailAndPassword: {
+      enabled: true,
+      disableSignUp: true,
+      minPasswordLength: 12,
+      resetPasswordTokenExpiresIn: 60 * 60,
+      revokeSessionsOnPasswordReset: true,
+      sendResetPassword: async ({ user, url }) => {
+        await sendMail(mails.passwordReset(user.email, url));
+      },
+    },
     session: { expiresIn: 60 * 60 * 8, updateAge: 60 * 30 },
     rateLimit: { enabled: true, window: 60, max: 30 },
     advanced: {

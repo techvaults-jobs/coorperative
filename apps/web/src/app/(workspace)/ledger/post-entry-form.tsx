@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/field";
 import { submitEntry, type FormState } from "../actions";
@@ -70,11 +71,7 @@ export function PostEntryForm({
       <Field label="Amount (₦)" htmlFor="amount" error={err.amount}>
         <Input id="amount" name="amount" inputMode="decimal" placeholder="0.00" required aria-invalid={!!err.amount} className="text-right font-mono" />
       </Field>
-      {state.message && (
-        <p role="status" className={state.ok ? "text-accent text-sm" : "text-danger text-sm"}>
-          {state.message}
-        </p>
-      )}
+      {state.message && <Alert tone={state.ok ? "success" : "danger"}>{state.message}</Alert>}
       <Button type="submit" disabled={pending}>
         {pending ? "Submitting…" : "Submit for approval"}
       </Button>

@@ -2,3 +2,8 @@ export * from "./money.js";
 export * from "./ledger.js";
 export * from "./audit.js";
 export * from "./permissions.js";
+export * from "./configuration.js";
+export * from "./loans.js";
+export * from "./products.js";
+export * from "./payroll.js";
+export * from "./importing.js";

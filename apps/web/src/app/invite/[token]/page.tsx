@@ -1,6 +1,7 @@
 import { eq, findInvitation, schema } from "@techvaults/db";
 import { headers } from "next/headers";
 import Link from "next/link";
+import { AuthShell } from "@/components/auth-shell";
 import { SignOutButton } from "@/components/sign-out-button";
 import { buttonClass } from "@/components/ui/button";
 import { auth } from "@/lib/auth";
@@ -10,7 +11,7 @@ import { AcceptForm } from "./accept-form";
 
 export const dynamic = "force-dynamic";
 // The token is in the path, so never send it onward in a Referer header.
-export const metadata = { title: "Accept invitation · TechVaults Cooperative", referrer: "no-referrer" as const };
+export const metadata = { title: "Accept invitation", referrer: "no-referrer" as const };
 
 const CLOSED = {
   expired: "This invitation has expired. Ask your society's secretary for a new link.",
@@ -82,13 +83,5 @@ export default async function InvitePage({ params }: { params: Promise<{ token: 
 }
 
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <main className="mx-auto flex min-h-[80vh] max-w-sm flex-col justify-center gap-6 px-4 py-12">
-      <div className="flex flex-col gap-1">
-        <p className="text-muted font-mono text-xs tracking-widest uppercase">TechVaults Cooperative</p>
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-      </div>
-      {children}
-    </main>
-  );
+  return <AuthShell title={title}>{children}</AuthShell>;
 }

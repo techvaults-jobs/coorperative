@@ -40,21 +40,23 @@ export const PERMISSIONS = [
   "settings.manage",
   "settings.approve",
   "officers.manage",
+  "accounts.manage",
   "audit.read",
   "self.read",
+  "self.apply",
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
 const GRANTS: Record<Role, readonly Permission[]> = {
-  principal_officer: ["members.read", "ledger.read", "ledger.approve", "settings.approve", "officers.manage", "audit.read"],
+  principal_officer: ["members.read", "ledger.read", "ledger.approve", "settings.approve", "officers.manage", "accounts.manage", "audit.read"],
   chairperson: ["members.read", "ledger.read", "ledger.approve", "loans.approve", "settings.approve", "audit.read"],
   secretary: ["members.read", "members.write", "settings.manage", "officers.manage"],
-  treasurer: ["members.read", "ledger.read", "ledger.prepare", "ledger.reverse", "payroll.manage"],
+  treasurer: ["members.read", "ledger.read", "ledger.prepare", "ledger.reverse", "loans.prepare", "payroll.manage", "accounts.manage"],
   loan_officer: ["members.read", "loans.prepare", "ledger.read"],
   loan_committee: ["members.read", "loans.approve", "ledger.read"],
   payroll_officer: ["payroll.manage"],
   auditor: ["members.read", "ledger.read", "audit.read"],
-  member: ["self.read"],
+  member: ["self.read", "self.apply"],
 };
 
 export function permissionsFor(roles: readonly Role[]): Set<Permission> {

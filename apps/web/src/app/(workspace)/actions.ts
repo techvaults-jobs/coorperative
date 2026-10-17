@@ -5,6 +5,7 @@ import {
   approveSubmission,
   changeOfficerRoles,
   createMember,
+  inviteMember,
   inviteOfficer,
   listAccounts,
   OfficerError,
@@ -19,10 +20,12 @@ import {
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { appUrl, mails, sendMail } from "@/lib/mail";
+import { roleLabel } from "@/lib/roles";
 import { inSociety, requireViewer, requireWorkspace, SOCIETY_COOKIE } from "@/lib/session";
 
 export type FormState = { ok: boolean; message?: string; fieldErrors?: Record<string, string> };
-export type InviteState = FormState & { link?: string; email?: string };
+export type InviteState = FormState & { link?: string; email?: string; delivered?: boolean };
 
 export async function switchSociety(formData: FormData) {
   const viewer = await requireViewer();
@@ -189,9 +192,10 @@ export async function inviteOfficerAction(_prev: InviteState, formData: FormData
   if (Object.keys(fieldErrors).length) return { ok: false, fieldErrors };
   try {
     const { token } = await inSociety(ws, (tx) => inviteOfficer(tx, ws.actor, { email, roles }));
-    const base = (process.env.BETTER_AUTH_URL ?? "http://localhost:3000").replace(/\/$/, "");
+    const link = `${appUrl()}/invite/${token}`;
+    const { delivered } = await sendMail(mails.officerInvite(email.toLowerCase(), ws.society.societyName, roles.map(roleLabel).join(", "), link, ws.user.name));
     revalidatePath("/officers");
-    return { ok: true, email: email.toLowerCase(), link: `${base}/invite/${token}` };
+    return { ok: true, email: email.toLowerCase(), link, delivered };
   } catch (e) {
     return { ok: false, message: describe(e) };
   }
@@ -224,4 +228,19 @@ export async function updateOfficerAction(_prev: FormState, formData: FormData):
   // A removed officer's row (and this form) disappears, so report removal at page level.
   if (remove) redirect("/officers?notice=removed");
   return { ok: true, message: "Roles updated." };
+}
+
+export async function inviteMemberAction(_prev: InviteState, formData: FormData): Promise<InviteState> {
+  const ws = await requireWorkspace();
+  const memberId = text(formData, "memberId");
+  const email = text(formData, "email");
+  try {
+    const { token } = await inSociety(ws, (tx) => inviteMember(tx, ws.actor, memberId, email));
+    const link = `${appUrl()}/invite/${token}`;
+    const { delivered } = await sendMail(mails.memberInvite(email.toLowerCase(), ws.society.societyName, link));
+    revalidatePath(`/members/${memberId}`);
+    return { ok: true, email: email.toLowerCase(), link, delivered };
+  } catch (e) {
+    return { ok: false, message: describe(e) };
+  }
 }

@@ -1,59 +1,235 @@
 @import "tailwindcss";
 
-/* Design tokens. Neutrals lean slightly green toward the brand accent; status colours are separate from the accent. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/*
+ * Cooperative Vaults design tokens.
+ * Brand colours derive from one --accent, so a society can set its own colour
+ * (style="--accent: …" on the workspace) and every tint follows. Status colours
+ * are separate from the brand and never themed.
+ */
 :root {
-  --background: #f6f7f4;
+  color-scheme: light;
+  --accent: #0d7a5f;
+  --gold: #a87a26;
+
+  --background: #f4f6f8;
   --surface: #ffffff;
-  --foreground: #17201c;
-  --muted: #5b675f;
-  --border: #dde2da;
-  --accent: #1e5b45;
-  --accent-soft: #e3eee8;
-  --warning: #8a5a12;
-  --warning-soft: #f6ecda;
-  --danger: #8a3b3b;
-  --danger-soft: #f5e4e2;
+  --surface-2: #f8fafb;
+  --foreground: #0f1729;
+  --muted: #5a6577;
+  --subtle: #8a94a6;
+  --border: #e3e7ed;
+  --border-strong: #cfd5de;
+
+  --accent-foreground: #ffffff;
+  --accent-soft: color-mix(in oklab, var(--accent) 10%, var(--surface));
+  --accent-strong: color-mix(in oklab, var(--accent) 82%, black);
+  --gold-soft: color-mix(in oklab, var(--gold) 12%, var(--surface));
+
+  --success: #13795b;
+  --success-soft: #e4f4ee;
+  --warning: #92600e;
+  --warning-soft: #fbf0db;
+  --danger: #b4282f;
+  --danger-soft: #fbe7e7;
+  --info: #2563c9;
+  --info-soft: #e6eefb;
+
+  /* Charts (dataviz reference palette, slots 1–3 validate all-pairs). */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --grid: #e8ebef;
+
+  /* Shell: an ink sidebar in both themes. */
+  --sidebar: #0b1322;
+  --sidebar-2: #121c2f;
+  --sidebar-foreground: #c5cedb;
+  --sidebar-muted: #7d8aa0;
+  --sidebar-border: #1c2840;
+  --sidebar-accent: color-mix(in oklab, var(--accent) 55%, #7ff0c8);
+
+  --shadow-sm: 0 1px 2px rgb(15 23 41 / 0.06);
+  --shadow-md: 0 4px 16px -4px rgb(15 23 41 / 0.12), 0 2px 4px rgb(15 23 41 / 0.04);
+  --shadow-lg: 0 24px 48px -12px rgb(15 23 41 / 0.25);
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #111714;
-    --surface: #18201c;
-    --foreground: #e6ece8;
-    --muted: #9aa8a0;
-    --border: #2b3631;
-    --accent: #6cc3a0;
-    --accent-soft: #1d3229;
-    --warning: #e0b064;
-    --warning-soft: #352a17;
-    --danger: #e59a92;
-    --danger-soft: #3a2220;
+  :root:not([data-theme="light"]) {
     color-scheme: dark;
+    --accent: #2fbf8f;
+    --gold: #d9a94c;
+    --background: #080d17;
+    --surface: #0f1726;
+    --surface-2: #131c2e;
+    --foreground: #e7ecf3;
+    --muted: #97a3b6;
+    --subtle: #6b778b;
+    --border: #1e293d;
+    --border-strong: #2b3850;
+    --accent-foreground: #04261b;
+    --accent-strong: color-mix(in oklab, var(--accent) 80%, white);
+    --success: #3fcf9a;
+    --success-soft: #0f2e25;
+    --warning: #e9b45a;
+    --warning-soft: #33270f;
+    --danger: #f08a8a;
+    --danger-soft: #3a1719;
+    --info: #79a8f2;
+    --info-soft: #14233f;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --grid: #1c2638;
+    --sidebar: #060a12;
+    --sidebar-2: #0d1422;
+    --sidebar-border: #162036;
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-md: 0 4px 16px -4px rgb(0 0 0 / 0.5);
+    --shadow-lg: 0 24px 48px -12px rgb(0 0 0 / 0.6);
   }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --accent: #2fbf8f;
+  --gold: #d9a94c;
+  --background: #080d17;
+  --surface: #0f1726;
+  --surface-2: #131c2e;
+  --foreground: #e7ecf3;
+  --muted: #97a3b6;
+  --subtle: #6b778b;
+  --border: #1e293d;
+  --border-strong: #2b3850;
+  --accent-foreground: #04261b;
+  --accent-strong: color-mix(in oklab, var(--accent) 80%, white);
+  --success: #3fcf9a;
+  --success-soft: #0f2e25;
+  --warning: #e9b45a;
+  --warning-soft: #33270f;
+  --danger: #f08a8a;
+  --danger-soft: #3a1719;
+  --info: #79a8f2;
+  --info-soft: #14233f;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --grid: #1c2638;
+  --sidebar: #060a12;
+  --sidebar-2: #0d1422;
+  --sidebar-border: #162036;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 16px -4px rgb(0 0 0 / 0.5);
+  --shadow-lg: 0 24px 48px -12px rgb(0 0 0 / 0.6);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
   --color-accent-soft: var(--accent-soft);
+  --color-accent-strong: var(--accent-strong);
+  --color-gold: var(--gold);
+  --color-gold-soft: var(--gold-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
   --color-warning: var(--warning);
   --color-warning-soft: var(--warning-soft);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-2: var(--sidebar-2);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --animate-in: fade-up 180ms ease-out;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--accent) 25%, transparent);
 }
 
 .tabular {
   font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media print {
+  [data-print-hide] {
+    display: none !important;
+  }
+  :root {
+    color-scheme: light;
+    --background: #ffffff;
+    --surface: #ffffff;
+    --foreground: #000000;
+    --muted: #444444;
+  }
+  body {
+    background: white;
+  }
+  main {
+    padding: 0 !important;
+  }
+  @page {
+    margin: 16mm 14mm;
+  }
+}
+
+/* A society's own colour (set as --brand on the workspace). Derived tints are redeclared
+   here because custom properties resolve where they are declared. Dark mode lightens it. */
+.branded {
+  --accent: var(--brand);
+  --accent-soft: color-mix(in oklab, var(--accent) 10%, var(--surface));
+  --accent-strong: color-mix(in oklab, var(--accent) 82%, black);
+  --sidebar-accent: color-mix(in oklab, var(--accent) 55%, white);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .branded {
+    --accent: color-mix(in oklab, var(--brand) 62%, white);
+    --accent-strong: color-mix(in oklab, var(--accent) 80%, white);
+  }
+}
+:root[data-theme="dark"] .branded {
+  --accent: color-mix(in oklab, var(--brand) 62%, white);
+  --accent-strong: color-mix(in oklab, var(--accent) 80%, white);
 }

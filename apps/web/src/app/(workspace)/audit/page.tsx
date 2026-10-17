@@ -4,13 +4,43 @@ import { EmptyState, PageHeader } from "@/components/ui/page-header";
 import { Table, Td, Th } from "@/components/ui/table";
 import { hasPermission, inSociety, requireWorkspace } from "@/lib/session";
 
-export const metadata = { title: "Audit trail · TechVaults Cooperative" };
+export const metadata = { title: "Audit trail" };
 
 const ACTION_LABEL: Record<string, string> = {
   "member.created": "Member added",
   "member.updated": "Member changed",
-  "journal.posted": "Entry posted",
-  "journal.reversed": "Entry reversed",
+  "journal.submitted": "Entry submitted for approval",
+  "journal.reversal_requested": "Reversal requested",
+  "journal.posted": "Entry approved and posted",
+  "journal.reversed": "Reversal approved and posted",
+  "journal.rejected": "Entry rejected",
+  "journal.withdrawn": "Entry withdrawn",
+  "officer.invited": "Officer invited",
+  "officer.invitation_revoked": "Invitation revoked",
+  "officer.invitation_replaced": "Invitation replaced",
+  "officer.joined": "Officer joined",
+  "officer.roles_changed": "Officer roles changed",
+  "officer.removed": "Officer access removed",
+  "society.settings_changed": "Society settings changed",
+  "account.created": "Account added",
+  "account.deactivated": "Account deactivated",
+  "account.reactivated": "Account reactivated",
+  "product.proposed": "Product proposed",
+  "product.approved": "Product approved",
+  "product.change_proposed": "Product change proposed",
+  "product.change_approved": "Product change approved",
+  "product.change_rejected": "Product change sent back",
+  "product.retired": "Product retired",
+  "loan.applied": "Loan application recorded",
+  "loan.approved": "Loan approved",
+  "loan.rejected": "Loan declined",
+  "loan.withdrawn": "Loan withdrawn",
+  "loan.disbursement_prepared": "Loan disbursement prepared",
+  "contribution.changed": "Monthly contribution changed",
+  "payroll.created": "Payroll month started",
+  "payroll.issued": "Deduction schedule sent",
+  "payroll.remittance_loaded": "Remittance loaded",
+  "payroll.submitted": "Payroll posting prepared",
 };
 
 export default async function AuditPage() {

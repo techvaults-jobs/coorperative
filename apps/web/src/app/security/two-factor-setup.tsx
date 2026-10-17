@@ -94,7 +94,7 @@ export function TwoFactorSetup({ enabled, officer }: { enabled: boolean; officer
             <code className="font-mono text-sm break-all">{step.secret}</code>
           </div>
         </div>
-        <form onSubmit={confirm} className="flex flex-col gap-3">
+        <form onSubmit={confirm} method="post" className="flex flex-col gap-3">
           <Field label="6-digit code" htmlFor="code" error={error}>
             <Input id="code" name="code" inputMode="numeric" pattern="[0-9]{6}" autoComplete="one-time-code" required className="font-mono tracking-widest" />
           </Field>
@@ -108,7 +108,7 @@ export function TwoFactorSetup({ enabled, officer }: { enabled: boolean; officer
 
   if (enabled) {
     return (
-      <form onSubmit={disable} className="flex flex-col gap-3">
+      <form onSubmit={disable} method="post" className="flex flex-col gap-3">
         {officer && <p className="text-muted text-sm">Your role requires two-factor. If you turn it off you won&apos;t be able to open your society&apos;s records until you turn it back on.</p>}
         <Field label="Confirm your password to turn it off" htmlFor="password" error={error}>
           <Input id="password" name="password" type="password" autoComplete="current-password" required />
@@ -121,7 +121,7 @@ export function TwoFactorSetup({ enabled, officer }: { enabled: boolean; officer
   }
 
   return (
-    <form onSubmit={start} className="flex flex-col gap-3">
+    <form onSubmit={start} method="post" className="flex flex-col gap-3">
       <Field label="Confirm your password to start" htmlFor="password" error={error}>
         <Input id="password" name="password" type="password" autoComplete="current-password" required />
       </Field>
