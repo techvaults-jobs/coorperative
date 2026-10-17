@@ -6,3 +6,7 @@ allowBuilds:
   unrs-resolver: true
   "@tailwindcss/oxide": true
   esbuild: true
+# Security floors for transitive dependencies of next (see pnpm audit).
+overrides:
+  postcss: ">=8.5.30"
+  sharp: ">=0.35.5"
