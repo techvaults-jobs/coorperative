@@ -1,4 +1,6 @@
 import { add, formatNaira, parseNaira } from "@techvaults/core";
+import Link from "next/link";
+import { buttonClass } from "@/components/ui/button";
 import { checkHealth } from "@/lib/health";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +32,7 @@ const FOUNDATION = [
   },
 ];
 
-const NEXT = ["Sign-in with two-factor authentication", "Member register", "Journal and trial balance", "Monthly deduction reconciliation"];
+const NEXT = ["Monthly payroll deduction schedules and reconciliation", "Approval workflows (maker-checker) for entries", "Member self-service statements", "Data import for existing societies"];
 
 export default async function Home() {
   const health = await checkHealth();
@@ -47,6 +49,11 @@ export default async function Home() {
           One platform for Nigerian cooperative societies, configured to each society&apos;s approved rules. This preview
           shows the foundation: the ledger, isolation and audit controls that every later feature builds on.
         </p>
+        <div>
+          <Link href="/sign-in" className={buttonClass("primary")}>
+            Sign in
+          </Link>
+        </div>
       </header>
 
       <section aria-labelledby="status" className="border-border bg-surface flex flex-col gap-4 rounded-lg border p-5 sm:flex-row sm:items-center sm:justify-between">

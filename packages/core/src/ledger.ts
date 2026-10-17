@@ -95,12 +95,12 @@ export function validateEntry(entry: JournalEntryDraft): void {
 /** Build the reversal of a posted entry: same lines, sides swapped. */
 export function reversalOf(
   original: JournalEntryDraft & { id: string },
-  opts: { entryDate: string; reason: string; idempotencyKey: string },
+  opts: { entryDate: string; reason: string; idempotencyKey: string; reference?: string },
 ): JournalEntryDraft & { reversesEntryId: string } {
   const reversal = {
     societyId: original.societyId,
     entryDate: opts.entryDate,
-    description: `Reversal of ${original.id}: ${opts.reason}`,
+    description: `Reversal of ${opts.reference ?? original.id}: ${opts.reason}`,
     idempotencyKey: opts.idempotencyKey,
     reversesEntryId: original.id,
     lines: original.lines.map((line) => ({

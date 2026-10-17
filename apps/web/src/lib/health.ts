@@ -1,13 +1,6 @@
 import "server-only";
-import { createDb, type Database } from "@techvaults/db";
-import { sql } from "drizzle-orm";
-
-let cached: Database | undefined;
-
-function db(): Database {
-  cached ??= createDb().db;
-  return cached;
-}
+import { sql } from "@techvaults/db";
+import { db } from "./db";
 
 export type Health =
   | { ok: true; database: "connected"; guardedTables: number; appendOnlyTriggers: number; checkedAt: string }

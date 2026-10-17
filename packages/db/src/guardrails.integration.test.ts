@@ -13,8 +13,9 @@ import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, withSociety, type Database } from "./client.js";
 import * as schema from "./schema.js";
-import { verifySocietyAuditChain } from "./services/audit.js";
-import { memberBalances, PermissionError, postJournalEntry, reverseJournalEntry, trialBalance, type Actor } from "./services/ledger.js";
+import { listAuditEvents, verifySocietyAuditChain } from "./services/audit.js";
+import { listUserSocieties } from "./services/societies.js";
+import { listJournal, memberBalances, PermissionError, postJournalEntry, reverseJournalEntry, trialBalance, type Actor } from "./services/ledger.js";
 import { createMember, listMembers, updateMember } from "./services/members.js";
 
 const ADMIN = process.env.TEST_PG_URL;
@@ -243,5 +244,34 @@ describe.runIf(ADMIN)("database guardrails", () => {
       await t`alter table audit_events enable trigger audit_events_append_only`;
     });
     expect(await withSociety(app.db, ids.socA, (tx) => verifySocietyAuditChain(tx, ids.socA))).toMatchObject({ ok: false, brokenAtSequence: 1 });
+  });
+
+  it("lists journal entries with lines, newest first, and marks reversals", async () => {
+    const journal = await withSociety(app.db, ids.socA, (tx) => listJournal(tx, actor(["treasurer"])));
+    expect(journal.length).toBeGreaterThanOrEqual(3);
+    expect(journal[0]!.entryNo > journal[1]!.entryNo).toBe(true);
+    const fee = journal.find((e) => e.description === "Entrance fee – A-001")!;
+    expect(fee.reversedByEntryId).not.toBeNull();
+    expect(fee.lines.map((l) => [l.accountCode, l.side])).toEqual([
+      ["1100", "debit"],
+      ["4100", "credit"],
+    ]);
+    const events = await withSociety(app.db, ids.socA, (tx) => listAuditEvents(tx, ids.socA));
+    expect(events[0]!.sequence).toBeGreaterThan(events.at(-1)!.sequence);
+  });
+
+  it("lists a user's societies without opening society_users to the app", async () => {
+    await adminDb.insert(schema.societyUsers).values([
+      { societyId: ids.socA, userId: ids.treasurer, roles: ["treasurer", "not_a_real_role"] },
+      { societyId: ids.socB, userId: ids.chair, roles: ["chairperson"] },
+    ]);
+    const mine = await listUserSocieties(app.db, ids.treasurer);
+    expect(mine).toEqual([{ societyId: ids.socA, societyName: "Unilag Staff Cooperative (test)", societySlug: "test-a", roles: ["treasurer"] }]);
+    // Direct reads are still limited by row-level security.
+    expect(await app.db.select().from(schema.societyUsers)).toEqual([]);
+  });
+
+  it("does not let the app make anyone platform staff", async () => {
+    await rejectsWith(app.db.update(schema.users).set({ isPlatformStaff: true }), /permission denied/);
   });
 });

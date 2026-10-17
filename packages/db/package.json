@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -14,6 +16,7 @@
   "dependencies": {
     "@techvaults/core": "workspace:*",
     "drizzle-orm": "0.45.4",
+    "kysely": "0.29.6",
     "postgres": "3.4.7"
   },
   "devDependencies": {
@@ -21,6 +24,6 @@
     "drizzle-kit": "0.31.11",
     "tsx": "4.20.5",
     "typescript": "5.9.3",
-    "vitest": "3.2.4"
+    "vitest": "4.1.11"
   }
 }

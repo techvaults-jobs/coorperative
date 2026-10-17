@@ -66,3 +66,20 @@ export async function verifySocietyAuditChain(tx: Tx, societyId: string): Promis
   const rows = await tx.select().from(auditEvents).where(eq(auditEvents.societyId, societyId)).orderBy(asc(auditEvents.sequence));
   return verifyChain(rows.map(toEvent));
 }
+
+export interface AuditView extends AuditEvent {
+  actorName: string | null;
+}
+
+export async function listAuditEvents(tx: Tx, societyId: string, limit = 100): Promise<AuditView[]> {
+  const rows = await tx.execute<Row & { actor_name: string | null }>(sql`
+    select a.society_id as "societyId", a.sequence, a.actor_id as "actorId", a.action, a.entity_type as "entityType",
+           a.entity_id as "entityId", a.occurred_at as "occurredAt", a.before, a.after, a.reason,
+           a.prev_hash as "prevHash", a.hash, u.name as actor_name
+    from audit_events a left join users u on u.id = a.actor_id
+    where a.society_id = ${societyId}
+    order by a.sequence desc
+    limit ${Math.min(limit, 500)}
+  `);
+  return rows.map((r) => ({ ...toEvent(r), actorName: r.actor_name }));
+}

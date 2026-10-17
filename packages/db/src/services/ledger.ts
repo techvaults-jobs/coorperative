@@ -120,7 +120,7 @@ export async function reverseJournalEntry(
       })),
       ...(original.policyVersionId ? { policyVersionId: original.policyVersionId } : {}),
     },
-    opts,
+    { ...opts, reference: `#${original.entryNo}` },
   );
   return postJournalEntry(tx, actor, reversal);
 }
@@ -185,4 +185,86 @@ export async function memberBalances(tx: Tx, memberId: string): Promise<Omit<Acc
     const credit = kobo(BigInt(r.credit));
     return { ...r, debit, credit, balance: balance(r.class, [{ side: "debit", amount: debit }, { side: "credit", amount: credit }]) };
   });
+}
+
+export type LedgerAccount = typeof ledgerAccounts.$inferSelect;
+
+export async function listAccounts(tx: Tx, actor: Actor): Promise<LedgerAccount[]> {
+  if (!can(actor.roles, "ledger.read")) throw new PermissionError("Your role cannot view the ledger");
+  return tx.select().from(ledgerAccounts).orderBy(asc(ledgerAccounts.code));
+}
+
+export interface JournalView {
+  id: string;
+  entryNo: bigint;
+  entryDate: string;
+  description: string;
+  reversesEntryId: string | null;
+  reversedByEntryId: string | null;
+  postedAt: Date;
+  postedByName: string;
+  lines: { accountCode: string; accountName: string; memberNo: string | null; memberName: string | null; side: "debit" | "credit"; amount: Kobo }[];
+}
+
+/** Most recent journal entries with their lines, newest first. */
+export async function listJournal(tx: Tx, actor: Actor, opts: { limit?: number; memberId?: string } = {}): Promise<JournalView[]> {
+  if (!can(actor.roles, "ledger.read") && !opts.memberId) throw new PermissionError("Your role cannot view the ledger");
+  const limit = Math.min(opts.limit ?? 50, 200);
+  const entries = await tx.execute<{
+    id: string;
+    entry_no: string;
+    entry_date: string;
+    description: string;
+    reverses_entry_id: string | null;
+    reversed_by: string | null;
+    posted_at: string;
+    posted_by_name: string;
+  }>(sql`
+    select e.id, e.entry_no, e.entry_date::text, e.description, e.reverses_entry_id,
+           r.id as reversed_by, e.posted_at, u.name as posted_by_name
+    from journal_entries e
+    join users u on u.id = e.posted_by
+    left join journal_entries r on r.reverses_entry_id = e.id
+    where ${opts.memberId ? sql`exists (select 1 from journal_lines l where l.entry_id = e.id and l.member_id = ${opts.memberId})` : sql`true`}
+    order by e.entry_no desc
+    limit ${limit}
+  `);
+  if (entries.length === 0) return [];
+  const ids = entries.map((e) => e.id);
+  const lines = await tx.execute<{
+    entry_id: string;
+    code: string;
+    name: string;
+    member_no: string | null;
+    full_name: string | null;
+    side: "debit" | "credit";
+    amount: string;
+  }>(sql`
+    select l.entry_id, a.code, a.name, m.member_no, m.full_name, l.side, l.amount
+    from journal_lines l
+    join ledger_accounts a on a.id = l.account_id
+    left join members m on m.id = l.member_id
+    where l.entry_id in ${ids}
+    order by l.id
+  `);
+  return entries.map((e) => ({
+    id: e.id,
+    entryNo: BigInt(e.entry_no),
+    entryDate: e.entry_date,
+    description: e.description,
+    reversesEntryId: e.reverses_entry_id,
+    reversedByEntryId: e.reversed_by,
+    postedAt: new Date(e.posted_at),
+    postedByName: e.posted_by_name,
+    lines: lines
+      .filter((l) => l.entry_id === e.id)
+      .map((l) => ({
+        accountCode: l.code,
+        accountName: l.name,
+        memberNo: l.member_no,
+        memberName: l.full_name,
+        side: l.side,
+        amount: kobo(BigInt(l.amount)),
+      })),
+  }));
 }

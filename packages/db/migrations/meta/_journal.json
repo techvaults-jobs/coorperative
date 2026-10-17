@@ -15,6 +15,20 @@
       "when": 1792196428488,
       "tag": "0001_guardrails",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792199120130,
+      "tag": "0002_auth",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792199121093,
+      "tag": "0003_auth_grants",
+      "breakpoints": true
     }
   ]
 }

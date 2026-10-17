@@ -11,6 +11,6 @@
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "start": "pnpm --filter @techvaults/db db:migrate && pnpm --filter @techvaults/web start"
+    "start": "pnpm --filter @techvaults/db db:migrate && pnpm --filter @techvaults/web seed --optional && pnpm --filter @techvaults/web start"
   }
 }
