@@ -1,103 +1,121 @@
-import Image from "next/image";
+import { add, formatNaira, parseNaira } from "@techvaults/core";
+import { checkHealth } from "@/lib/health";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+const FOUNDATION = [
+  {
+    title: "Money handled in kobo",
+    body: "Amounts are whole kobo with a recorded rounding rule. ₦0.10 + ₦0.20 is exactly ₦0.30.",
+  },
+  {
+    title: "Double-entry ledger",
+    body: "Every entry must balance. The database rejects an unbalanced entry when it is saved.",
+  },
+  {
+    title: "Corrections by reversal",
+    body: "Posted entries and audit records can't be edited or deleted. Mistakes are fixed with a linked reversal.",
+  },
+  {
+    title: "Society isolation",
+    body: "Row-level security limits every query to one society. Staff support access is time-limited and logged.",
+  },
+  {
+    title: "Tamper-evident audit trail",
+    body: "Each change is hash-chained to the one before it, so an edit to history is detectable.",
+  },
+  {
+    title: "Separation of duties",
+    body: "The person who prepares a transaction can't approve it. Auditors get read-only access.",
+  },
+];
+
+const NEXT = ["Sign-in with two-factor authentication", "Member register", "Journal and trial balance", "Monthly deduction reconciliation"];
+
+export default async function Home() {
+  const health = await checkHealth();
+  const sample = formatNaira(add(parseNaira("0.10"), parseNaira("0.20")));
+
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <main className="mx-auto flex max-w-5xl flex-col gap-12 px-4 py-12 sm:px-6 sm:py-16">
+      <header className="flex flex-col gap-4">
+        <p className="text-muted font-mono text-xs uppercase tracking-widest">TechVaults · Cooperative Management Platform</p>
+        <h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
+          Records that cooperative members and auditors can trust.
+        </h1>
+        <p className="text-muted max-w-2xl text-lg">
+          One platform for Nigerian cooperative societies, configured to each society&apos;s approved rules. This preview
+          shows the foundation: the ledger, isolation and audit controls that every later feature builds on.
+        </p>
+      </header>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+      <section aria-labelledby="status" className="border-border bg-surface flex flex-col gap-4 rounded-lg border p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 id="status" className="text-sm font-semibold">
+            System status
+          </h2>
+          <p className="text-muted text-sm">
+            Checked <time dateTime={health.checkedAt}>{new Date(health.checkedAt).toUTCString()}</time>
+          </p>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+        <dl className="tabular flex flex-wrap gap-x-8 gap-y-2 text-sm">
+          <div>
+            <dt className="text-muted">Database</dt>
+            <dd>
+              <span
+                className={`rounded px-2 py-0.5 text-xs font-semibold uppercase ${health.ok ? "bg-accent-soft text-accent" : "bg-danger-soft text-danger"}`}
+              >
+                {health.ok ? "Connected" : "Unavailable"}
+              </span>
+            </dd>
+          </div>
+          {health.ok && (
+            <>
+              <div>
+                <dt className="text-muted">Tables with society isolation</dt>
+                <dd className="font-mono">{health.guardedTables}</dd>
+              </div>
+              <div>
+                <dt className="text-muted">Append-only guards</dt>
+                <dd className="font-mono">{health.appendOnlyTriggers}</dd>
+              </div>
+            </>
+          )}
+          <div>
+            <dt className="text-muted">₦0.10 + ₦0.20</dt>
+            <dd className="font-mono">{sample}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section aria-labelledby="foundation" className="flex flex-col gap-5">
+        <h2 id="foundation" className="text-xl font-semibold">
+          What the foundation guarantees
+        </h2>
+        <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {FOUNDATION.map((item) => (
+            <li key={item.title} className="border-border flex flex-col gap-1 border-t pt-4">
+              <h3 className="font-medium">{item.title}</h3>
+              <p className="text-muted text-sm leading-relaxed">{item.body}</p>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section aria-labelledby="next" className="flex flex-col gap-3">
+        <h2 id="next" className="text-xl font-semibold">
+          Coming next
+        </h2>
+        <ol className="text-muted flex list-decimal flex-col gap-1 pl-5 text-sm">
+          {NEXT.map((n) => (
+            <li key={n}>{n}</li>
+          ))}
+        </ol>
+        <p className="text-muted max-w-2xl text-sm">
+          Loan rules, exit settlement and dividends will be added once discovery research and our legal and accounting advisers
+          have confirmed each society&apos;s rules.
+        </p>
+      </section>
+    </main>
   );
 }

@@ -8,7 +8,8 @@
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coop_app') THEN
-    CREATE ROLE coop_app LOGIN PASSWORD 'coop_app_dev_only';
+    -- No password here: migrate.ts sets it from APP_DB_PASSWORD so no secret lives in the repo.
+    CREATE ROLE coop_app LOGIN;
   END IF;
 END
 $$;

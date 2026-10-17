@@ -49,6 +49,7 @@ describe.runIf(ADMIN)("database guardrails", () => {
     admin = postgres(url.toString(), { max: 1, onnotice: () => {} });
     adminDb = drizzle(admin, { schema });
     await migrate(adminDb, { migrationsFolder: fileURLToPath(new URL("../migrations", import.meta.url)) });
+    await admin.unsafe("alter role coop_app password 'coop_app_test_only'");
 
     // Seed two societies as the owner (bypasses RLS, as onboarding would).
     const [a, b] = await adminDb
@@ -82,7 +83,7 @@ describe.runIf(ADMIN)("database guardrails", () => {
     await adminDb.insert(schema.members).values({ societyId: ids.socB, memberNo: "B-001", fullName: "Other Society Member" });
 
     url.username = "coop_app";
-    url.password = "coop_app_dev_only";
+    url.password = "coop_app_test_only";
     app = createDb(url.toString());
   });
 
