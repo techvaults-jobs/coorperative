@@ -1,0 +1,13 @@
+{
+  "name": "techvaults-cooperative",
+  "private": true,
+  "packageManager": "pnpm@11.22.0",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "dev": "pnpm --filter @techvaults/web dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
+  }
+}
