@@ -185,7 +185,9 @@ export async function updateSocietySettings(tx: Tx, actor: Actor, changes: Setti
 export type LedgerAccountRow = typeof ledgerAccounts.$inferSelect;
 
 export async function listChartOfAccounts(tx: Tx, actor: Actor): Promise<LedgerAccountRow[]> {
-  if (!can(actor.roles, "accounts.manage") && !can(actor.roles, "ledger.read")) throw new PermissionError("Your role cannot view the chart of accounts");
+  if (!(["accounts.manage", "ledger.read", "settings.manage"] as const).some((p) => can(actor.roles, p))) {
+    throw new PermissionError("Your role cannot view the chart of accounts");
+  }
   return tx.select().from(ledgerAccounts).orderBy(asc(ledgerAccounts.code));
 }
 

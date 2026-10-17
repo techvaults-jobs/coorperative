@@ -250,6 +250,38 @@ try {
   await chair.goto(`${BASE}/officers`, { waitUntil: "networkidle" });
   check("a chairperson can't manage officers", (await chair.getByText("doesn't include managing officers").count()) === 1);
 
+  // Loans: eligibility-checked application, committee decision, disbursement through journal approval
+  await page.goto(`${BASE}/loans/new`, { waitUntil: "networkidle" });
+  await page.selectOption("#memberId", { label: "DSC-0001 · Adaeze Okonkwo" });
+  await page.selectOption("#productId", { label: "Regular loan" });
+  await page.fill("#amount", "90000");
+  await page.fill("#termMonths", "6");
+  await page.fill("#purpose", `E2E loan ${stamp}`);
+  await page.selectOption("#guarantor-0", { label: "DSC-0002 · Babatunde Adeyemi" });
+  await page.getByText("Doesn't meet the product's rules yet").waitFor({ timeout: 10000 });
+  check("loan eligibility flags an amount over the savings limit", (await page.getByText("At most 3× savings").count()) === 1);
+  await page.fill("#amount", "50000");
+  await page.getByText("Meets every rule of the product").waitFor({ timeout: 10000 });
+  await page.getByRole("button", { name: "Record application" }).click();
+  await page.waitForURL(/\/loans\/[0-9a-f-]{36}/, { timeout: 15000 });
+  const loanUrl = page.url();
+  check("officer records an eligible loan application", (await page.getByText("Application recorded").count()) === 1);
+  check("the officer who recorded it can't approve it", (await page.getByRole("button", { name: "Approve loan" }).count()) === 0);
+  await chair.goto(loanUrl, { waitUntil: "networkidle" });
+  await chair.getByRole("button", { name: "Approve loan" }).click();
+  await chair.getByText("Approved. The treasurer can now prepare the disbursement.").waitFor({ timeout: 10000 });
+  check("a committee member approves the loan", true);
+  await page.goto(loanUrl, { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Prepare disbursement" }).click();
+  await page.getByText("Disbursement prepared.").waitFor({ timeout: 10000 });
+  await chair.goto(`${BASE}/approvals`, { waitUntil: "networkidle" });
+  await chair.locator("article", { hasText: "disbursement – DSC-0001" }).getByRole("button", { name: "Approve and post" }).click();
+  await chair.getByText(/Approved and posted as entry #\d+/).waitFor({ timeout: 10000 });
+  await page.goto(loanUrl, { waitUntil: "networkidle" });
+  const outstanding = await page.locator("div", { hasText: /^Principal outstanding/ }).locator("p.text-2xl").first().textContent();
+  check("disbursed loan is active with its full balance outstanding", (await page.getByText("Active", { exact: true }).count()) > 0 && outstanding === "₦50,000.00", outstanding ?? "");
+  check("the loan has a repayment schedule", (await page.locator("tbody tr").count()) === 6);
+
   // Request a reversal; the approver posts it
   await page.goto(`${BASE}/ledger`, { waitUntil: "networkidle" });
   const article = page.locator("article", { hasText: `E2E stationery ${stamp}` });
@@ -277,7 +309,8 @@ try {
   await page.goto(`${BASE}/trial-balance`);
   check("trial balance balances", (await page.getByText("Debits equal credits").count()) === 1);
   const bank = await page.locator("tr", { hasText: "Bank – current account" }).locator("td").last().textContent();
-  check("bank balance is correct", bank?.trim() === "393,749.50", bank?.trim());
+  // Seeded ₦393,749.50, less the loan paid out (₦50,000 less its 1% processing fee).
+  check("bank balance is correct", bank?.trim() === "344,249.50", bank?.trim());
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/trial-balance.png`, fullPage: true });
 
   await page.goto(`${BASE}/audit`);

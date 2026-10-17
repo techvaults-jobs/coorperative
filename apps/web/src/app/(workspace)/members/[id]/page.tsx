@@ -1,9 +1,12 @@
 import { formatNaira } from "@techvaults/core";
-import { getMember, listJournal, memberBalances } from "@techvaults/db";
+import { getMember, listJournal, listLoans, memberBalances } from "@techvaults/db";
+import Link from "next/link";
 import { Briefcase, CalendarDays, Hash, Landmark, Mail, Phone, PiggyBank, ShieldCheck, Wallet } from "lucide-react";
 import { notFound } from "next/navigation";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { buttonClass } from "@/components/ui/button";
+import { LOAN_STATUS } from "@/lib/loan-status";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat";
@@ -20,7 +23,8 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
   const ws = await requireWorkspace();
   if (!hasPermission(ws, "members.read")) return <EmptyState title="Your role doesn't include the member register." />;
   const { id } = await params;
-  const { terminology: terms } = await requireSociety();
+  const { terminology: terms, modules } = await requireSociety();
+  const showLoans = modules.includes("loans") && (hasPermission(ws, "loans.prepare") || hasPermission(ws, "loans.approve") || hasPermission(ws, "ledger.read"));
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
   const data = await inSociety(ws, async (tx) => {
     const member = await getMember(tx, ws.actor, id);
@@ -30,10 +34,11 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
       member,
       balances: canLedger ? await memberBalances(tx, id) : null,
       entries: canLedger ? await listJournal(tx, ws.actor, { memberId: id, limit: 200 }) : [],
+      loans: showLoans ? await listLoans(tx, ws.actor, { memberId: id }) : [],
     };
   });
   if (!data) notFound();
-  const { member, balances, entries } = data;
+  const { member, balances, entries, loans } = data;
   const status = MEMBER_STATUS[member.status];
   const details = [
     { icon: Hash, label: terms.externalId, value: member.staffId },
@@ -74,6 +79,42 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
             balances.map((b) => <StatCard key={b.code} label={b.name} icon={ICONS[b.code.slice(0, 2)]} value={formatNaira(b.balance)} />)
           )}
         </section>
+      )}
+
+      {showLoans && (
+        <Card>
+          <CardHeader
+            title="Loans"
+            description={loans.length ? `${loans.length} on record` : "No loans yet"}
+            actions={
+              hasPermission(ws, "loans.prepare") &&
+              member.status === "active" && (
+                <Link href={`/loans/new?member=${member.id}`} className={buttonClass("secondary", undefined, "sm")}>
+                  New application
+                </Link>
+              )
+            }
+          />
+          {loans.length > 0 && (
+            <ul className="divide-border mt-3 divide-y">
+              {loans.map((l) => (
+                <li key={l.id}>
+                  <Link href={`/loans/${l.id}`} className="hover:bg-surface-2 flex flex-wrap items-center gap-3 px-5 py-3 text-sm">
+                    <span className="text-accent font-mono text-[13px] font-medium">#{l.loanNo}</span>
+                    <span className="min-w-0 flex-1 truncate">
+                      {l.productName} · {l.purpose}
+                    </span>
+                    <span className="font-medium tabular-nums">{formatNaira(l.amount)}</span>
+                    <Badge tone={LOAN_STATUS[l.status]!.tone} dot>
+                      {LOAN_STATUS[l.status]!.label}
+                    </Badge>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+          {loans.length === 0 && <div className="h-5" />}
+        </Card>
       )}
 
       <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">

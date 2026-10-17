@@ -23,6 +23,8 @@ export interface JournalLine {
   amount: Kobo;
   /** Member sub-ledger the line belongs to, when the account is a member control account. */
   memberId?: string;
+  /** Loan sub-ledger the line belongs to (principal on the loan account, or interest and fees). */
+  loanId?: string;
   memo?: string;
 }
 

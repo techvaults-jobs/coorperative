@@ -5,6 +5,7 @@
 - **Discovery plan:** [docs/discovery](docs/discovery/README.md) · stakeholder PDF: [TechVaults-Cooperative-Discovery-Plan-v0.2.pdf](docs/TechVaults-Cooperative-Discovery-Plan-v0.2.pdf)
 - **Preview deployment (Railway):** https://cooperative.up.railway.app (synthetic demo society only; no real member data)
   - Demo admin: `admin@demo.techvaults.local`; password is the `SEED_ADMIN_PASSWORD` variable on the Railway `web` service. Two-factor is currently **not required** on the preview (`REQUIRE_TWO_FACTOR=false` on `web`, set 2026-10-17 at TechVaults' request); remove that variable to enforce it again (D-014).
+  - Both demo societies have approved savings, share and loan products; the farmers' society also has sample loans (active, approved, awaiting decision).
   - The demo admin belongs to two synthetic societies (a staff cooperative and a farmers' multipurpose cooperative with a year of history); switch between them in the sidebar.
   - Entries need a second officer's approval (D-015). The demo admin is secretary, treasurer and auditor, so to try approvals, open **Officers**, invite a second email as Chairperson, and open the link in a private window.
 
@@ -26,7 +27,7 @@ TEST_PG_URL=postgres://postgres@localhost:5432/postgres pnpm --filter @techvault
 DATABASE_ADMIN_URL=... APP_DB_PASSWORD=... pnpm --filter @techvaults/db db:migrate
 SEED_ADMIN_EMAIL=... SEED_ADMIN_PASSWORD=... DATABASE_ADMIN_URL=... pnpm --filter @techvaults/web seed
 DATABASE_URL=postgres://coop_app:...@.../db BETTER_AUTH_SECRET=... BETTER_AUTH_URL=http://localhost:3000 pnpm dev
-BASE=http://localhost:3000 EMAIL=... PASSWORD=... pnpm --filter @techvaults/web e2e   # browser walkthrough on a fresh seed (38 checks)
+BASE=http://localhost:3000 EMAIL=... PASSWORD=... pnpm --filter @techvaults/web e2e   # browser walkthrough on a fresh seed (44 checks)
 ```
 
 ## Deploy (Railway)

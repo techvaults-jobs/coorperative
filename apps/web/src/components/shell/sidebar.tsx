@@ -1,6 +1,6 @@
 "use client";
 
-import type { Permission } from "@techvaults/core";
+import type { Module, Permission } from "@techvaults/core";
 import { ChevronsUpDown } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -15,10 +15,11 @@ export interface ShellProps {
   current: { id: string; name: string; roles: string[]; sector: string };
   societies: { id: string; name: string }[];
   permissions: Permission[];
+  modules: Module[];
   pendingApprovals: number;
 }
 
-export function SidebarContent({ current, societies, permissions, pendingApprovals, onNavigate }: ShellProps & { onNavigate?: () => void }) {
+export function SidebarContent({ current, societies, permissions, modules, pendingApprovals, onNavigate }: ShellProps & { onNavigate?: () => void }) {
   const pathname = usePathname();
   return (
     <div className="flex h-full flex-col gap-6 px-3 py-5">
@@ -58,7 +59,7 @@ export function SidebarContent({ current, societies, permissions, pendingApprova
       </div>
 
       <nav aria-label="Main" className="flex flex-1 flex-col gap-5 overflow-y-auto">
-        {visibleGroups(permissions).map((group) => (
+        {visibleGroups(permissions, modules).map((group) => (
           <div key={group.label || "home"} className="flex flex-col gap-0.5">
             {group.label && <p className="text-sidebar-muted px-2.5 pb-1.5 text-[10px] font-semibold tracking-widest uppercase">{group.label}</p>}
             {group.items.map(({ href, label, icon: Icon }) => {

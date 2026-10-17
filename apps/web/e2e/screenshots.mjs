@@ -23,16 +23,22 @@ for (const [theme, vp, tag] of [["light", { width: 1440, height: 900 }, "light"]
   await ctx.addCookies(cookies);
   const page = await ctx.newPage();
   page.on("pageerror", (e) => errors.push(`${page.url()}: ${e.message}`));
-  for (const path of tag === "mobile" ? ["/overview", "/members"] : ["/overview", "/members", "/ledger", "/approvals", "/officers", "/trial-balance"]) {
+  for (const path of tag === "mobile" ? ["/overview", "/members"] : ["/overview", "/members", "/loans", "/loans/new", "/products", "/ledger", "/approvals", "/officers", "/trial-balance"]) {
     await page.goto(`${BASE}${path}`, { waitUntil: "networkidle" });
     await page.waitForTimeout(300);
-    await page.screenshot({ path: `${OUT}/${tag}-${path.slice(1)}.png`, fullPage: tag !== "mobile" });
+    await page.screenshot({ path: `${OUT}/${tag}-${path.slice(1).replaceAll("/", "-")}.png`, fullPage: tag !== "mobile" });
     if (tag === "mobile") {
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
       if (overflow) errors.push(`${path} overflows at phone width`);
     }
   }
   if (tag === "light") {
+    await page.goto(`${BASE}/loans?tab=active`, { waitUntil: "networkidle" });
+    if (await page.locator("tbody tr a").count()) {
+      await page.click("tbody tr a >> nth=0");
+      await page.waitForLoadState("networkidle");
+      await page.screenshot({ path: `${OUT}/light-loan.png`, fullPage: true });
+    }
     await page.goto(`${BASE}/members`, { waitUntil: "networkidle" });
     await page.click("tbody tr a >> nth=2");
     await page.waitForLoadState("networkidle");

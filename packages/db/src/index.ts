@@ -7,4 +7,6 @@ export * from "./services/members.js";
 export * from "./services/officers.js";
 export * from "./services/reports.js";
 export * from "./services/settings.js";
+export * from "./services/products.js";
+export * from "./services/loans.js";
 export * from "./services/societies.js";

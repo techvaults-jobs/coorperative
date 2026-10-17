@@ -68,7 +68,7 @@ export function Topbar(props: ShellProps & { theme: "system" | "light" | "dark" 
         </aside>
       </div>
 
-      <CommandPalette permissions={props.permissions} />
+      <CommandPalette permissions={props.permissions} modules={props.modules} />
     </>
   );
 }

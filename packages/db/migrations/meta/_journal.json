@@ -50,6 +50,20 @@
       "when": 1792235891240,
       "tag": "0006_society_configuration",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792237554322,
+      "tag": "0007_products_and_loans",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792237567149,
+      "tag": "0008_loan_guardrails",
+      "breakpoints": true
     }
   ]
 }

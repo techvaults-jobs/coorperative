@@ -9,8 +9,26 @@
  * the admin prepares each entry and a demo chairperson approves it. The chairperson has no
  * password and cannot sign in; invite a real approver from the Officers page.
  */
-import { parseNaira, type Kobo, type Role } from "@techvaults/core";
-import { approveSubmission, createDb, createMember, schema, sql, submitJournalEntry, withSociety, type Actor, type Tx } from "@techvaults/db";
+import { DEFAULT_LOAN_POLICY, DEFAULT_SAVINGS_POLICY, DEFAULT_SHARES_POLICY, parseNaira, type Kobo, type Role } from "@techvaults/core";
+import {
+  applyForLoan,
+  approveProductPolicy,
+  approveSubmission,
+  createAccount,
+  createDb,
+  createMember,
+  decideLoan,
+  disburseLoan,
+  listProducts,
+  proposeProduct,
+  recordRepayment,
+  schema,
+  sql,
+  submitJournalEntry,
+  withSociety,
+  type Actor,
+  type Tx,
+} from "@techvaults/db";
 import { hashPassword } from "better-auth/crypto";
 
 const ADMIN_ROLES: Role[] = ["secretary", "treasurer", "auditor"];
@@ -350,9 +368,76 @@ const farmSociety: SocietyDef = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Products and sample loans. Runs for existing demo societies too, and only adds what's missing.
+
+async function seedProducts(slug: string, loanName: string, sampleLoans: boolean) {
+  const [society] = await db.select().from(schema.societies).where(sql`slug = ${slug}`);
+  if (!society) return;
+  const [admin] = await db.select().from(schema.users).where(sql`email = ${email}`);
+  const [chair] = await db.select().from(schema.users).where(sql`email = ${`chair@${slug}.invalid`}`);
+  if (!admin || !chair) return;
+  const actor: Actor = { userId: admin.id, societyId: society.id, roles: [...ADMIN_ROLES, "loan_officer"] };
+  const approver: Actor = { userId: chair.id, societyId: society.id, roles: ["chairperson", "principal_officer"] };
+  const added = await withSociety(db, society.id, async (tx) => {
+    if ((await listProducts(tx, actor)).length > 0) return 0;
+    // The seed runs as the owner, which bypasses row-level security, so filter by society explicitly.
+    const accounts = await tx.select().from(schema.ledgerAccounts).where(sql`society_id = ${society.id}`);
+    const byCode = (code: string) => accounts.find((a) => a.code === code);
+    const loanAcct = byCode("1300") ?? (await createAccount(tx, actor, { code: "1300", name: "Members' loans", class: "asset", isMemberControl: true }));
+    const interest = byCode("4200") ?? (await createAccount(tx, actor, { code: "4200", name: "Interest on loans", class: "income" }));
+    const ids = [
+      await proposeProduct(tx, actor, {
+        kind: "loan",
+        code: "REG-LOAN",
+        name: loanName,
+        description: "Illustrative terms for the demo, pending each society's approved bye-laws.",
+        accountId: loanAcct.id,
+        incomeAccountId: interest.id,
+        policy: { ...DEFAULT_LOAN_POLICY, minMembershipMonths: 3, guarantorsRequired: 1, savingsMultiple: 3 },
+      }),
+      await proposeProduct(tx, actor, {
+        kind: "loan",
+        code: "EMRG-LOAN",
+        name: "Emergency loan",
+        description: "Small, short loans for urgent needs.",
+        accountId: loanAcct.id,
+        incomeAccountId: interest.id,
+        policy: { ...DEFAULT_LOAN_POLICY, interestMethod: "flat", annualRateBps: 600, maxTermMonths: 6, minTermMonths: 1, maxAmount: parseNaira("100000"), minAmount: parseNaira("5000"), savingsMultiple: null, guarantorsRequired: 0, processingFeeBps: 0, minMembershipMonths: 1 },
+      }),
+      await proposeProduct(tx, actor, { kind: "savings", code: "ORD-SAV", name: "Ordinary savings", accountId: byCode("2100")!.id, policy: DEFAULT_SAVINGS_POLICY }),
+      await proposeProduct(tx, actor, { kind: "shares", code: "ORD-SHR", name: "Ordinary shares", accountId: byCode("3100")!.id, policy: DEFAULT_SHARES_POLICY }),
+    ];
+    for (const id of ids) await approveProductPolicy(tx, approver, id);
+    if (sampleLoans) {
+      const members = await tx.select().from(schema.members).where(sql`society_id = ${society.id} and status = 'active'`).orderBy(schema.members.memberNo);
+      const bank = byCode("1100")!.id;
+      const [regular] = (await listProducts(tx, actor, { kind: "loan" })).filter((p) => p.code === "REG-LOAN");
+      const apply = (i: number, naira: string, months: number, purpose: string) =>
+        applyForLoan(tx, actor, { memberId: members[i]!.id, productId: regular!.id, amount: parseNaira(naira), termMonths: months, purpose, guarantorIds: [members[i + 1]!.id] });
+      // One running loan with a repayment, one approved awaiting disbursement, one awaiting decision.
+      const running = await apply(0, "120000", 12, "Fertiliser and seedlings for the planting season");
+      await decideLoan(tx, approver, running.id, "approve", "Within policy");
+      const d = await disburseLoan(tx, actor, running.id, { disbursedOn: "2026-07-01", firstDueDate: "2026-07-31", bankAccountId: bank, idempotencyKey: `seed:disburse:${running.id}` });
+      await approveSubmission(tx, approver, d.submissionId);
+      for (const [n, paidOn] of [[1, "2026-07-31"], [2, "2026-08-31"], [3, "2026-09-30"]] as const) {
+        const r = await recordRepayment(tx, actor, running.id, { amount: parseNaira("10661.85"), paidOn, bankAccountId: bank, idempotencyKey: `seed:repay:${running.id}:${n}` });
+        await approveSubmission(tx, approver, r.submissionId);
+      }
+      const approved = await apply(2, "60000", 6, "Irrigation pump repairs");
+      await decideLoan(tx, approver, approved.id, "approve", "Within policy");
+      await apply(4, "45000", 9, "School fees");
+    }
+    return ids.length;
+  });
+  if (added) console.log(`Added ${added} demo products${sampleLoans ? " and sample loans" : ""} to ${society.name}.`);
+}
+
 try {
   await seedSociety(staffSociety);
   await seedSociety(farmSociety);
+  await seedProducts(staffSociety.slug, "Regular loan", false);
+  await seedProducts(farmSociety.slug, "Input loan", true);
 } finally {
   await close();
 }

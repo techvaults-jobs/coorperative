@@ -29,6 +29,9 @@ export const memberStatus = pgEnum("member_status", ["applicant", "active", "sus
 export const accountClass = pgEnum("account_class", ["asset", "liability", "equity", "income", "expense"]);
 export const entrySide = pgEnum("entry_side", ["debit", "credit"]);
 export const societySector = pgEnum("society_sector", ["workplace", "agricultural", "transport", "market", "multipurpose", "credit_union", "housing", "other"]);
+export const productKind = pgEnum("product_kind", ["savings", "shares", "loan"]);
+export const productStatus = pgEnum("product_status", ["proposed", "active", "retired"]);
+export const loanStatus = pgEnum("loan_status", ["applied", "approved", "rejected", "withdrawn", "disbursing", "active", "closed"]);
 export const submissionStatus = pgEnum("submission_status", ["pending", "approved", "rejected", "withdrawn"]);
 
 export const societies = pgTable("societies", {
@@ -230,6 +233,7 @@ export interface SubmissionLine {
   side: "debit" | "credit";
   amount: string;
   memberId?: string;
+  loanId?: string;
   memo?: string;
 }
 
@@ -273,6 +277,8 @@ export const journalLines = pgTable(
     entryId: uuid("entry_id").notNull(),
     accountId: uuid("account_id").notNull(),
     memberId: uuid("member_id"),
+    /** The loan this line belongs to, on a member loan account (the loan sub-ledger). */
+    loanId: uuid("loan_id"),
     side: entrySide("side").notNull(),
     amount: bigint("amount", { mode: "bigint" }).notNull(),
     memo: text("memo"),
@@ -285,6 +291,7 @@ export const journalLines = pgTable(
     index("journal_lines_entry").on(t.entryId),
     index("journal_lines_account").on(t.societyId, t.accountId),
     index("journal_lines_member").on(t.societyId, t.memberId),
+    index("journal_lines_loan").on(t.loanId),
   ],
 );
 
@@ -330,5 +337,95 @@ export const officerInvitations = pgTable(
   (t) => [
     index("officer_invitations_society").on(t.societyId),
     check("officer_invitations_has_roles", sql`cardinality(${t.roles}) > 0`),
+  ],
+);
+
+/**
+ * Savings, share and loan products. `policy` is the approved policy in force; a change is
+ * held in `proposedPolicy` until an officer other than the proposer approves it.
+ */
+export const products = pgTable(
+  "products",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    societyId: uuid("society_id").notNull().references(() => societies.id),
+    kind: productKind("kind").notNull(),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    /** Member control account the product's balances live on. */
+    accountId: uuid("account_id").notNull(),
+    /** Loans: where interest and processing fees are credited. */
+    incomeAccountId: uuid("income_account_id"),
+    status: productStatus("status").notNull().default("proposed"),
+    policy: jsonb("policy").$type<Record<string, unknown>>(),
+    version: integer("version").notNull().default(0),
+    proposedPolicy: jsonb("proposed_policy").$type<Record<string, unknown>>(),
+    proposedBy: uuid("proposed_by").references(() => users.id),
+    proposedAt: timestamp("proposed_at", { withTimezone: true }),
+    approvedBy: uuid("approved_by").references(() => users.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("products_society_code").on(t.societyId, t.code),
+    unique("products_society_id_id").on(t.societyId, t.id),
+    foreignKey({ columns: [t.societyId, t.accountId], foreignColumns: [ledgerAccounts.societyId, ledgerAccounts.id] }),
+    foreignKey({ columns: [t.societyId, t.incomeAccountId], foreignColumns: [ledgerAccounts.societyId, ledgerAccounts.id] }),
+    check("products_active_has_policy", sql`${t.status} = 'proposed' or ${t.policy} is not null`),
+    check("products_separation_of_duties", sql`${t.approvedBy} is null or ${t.proposedBy} is null or ${t.approvedBy} <> ${t.proposedBy}`),
+  ],
+);
+
+/** A member's loan, from application to closure. The policy is a snapshot taken at application. */
+export const loans = pgTable(
+  "loans",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    societyId: uuid("society_id").notNull().references(() => societies.id),
+    loanNo: integer("loan_no").notNull(),
+    memberId: uuid("member_id").notNull(),
+    productId: uuid("product_id").notNull(),
+    amount: bigint("amount", { mode: "bigint" }).notNull(),
+    termMonths: integer("term_months").notNull(),
+    purpose: text("purpose").notNull(),
+    policy: jsonb("policy").$type<Record<string, unknown>>().notNull(),
+    policyVersion: integer("policy_version").notNull(),
+    status: loanStatus("status").notNull().default("applied"),
+    appliedBy: uuid("applied_by").notNull().references(() => users.id),
+    appliedAt: timestamp("applied_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedBy: uuid("decided_by").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decisionReason: text("decision_reason"),
+    disbursementSubmissionId: uuid("disbursement_submission_id"),
+    disbursedOn: date("disbursed_on"),
+    firstDueDate: date("first_due_date"),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("loans_society_loan_no").on(t.societyId, t.loanNo),
+    unique("loans_society_id_id").on(t.societyId, t.id),
+    foreignKey({ columns: [t.societyId, t.memberId], foreignColumns: [members.societyId, members.id] }),
+    foreignKey({ columns: [t.societyId, t.productId], foreignColumns: [products.societyId, products.id] }),
+    foreignKey({ columns: [t.societyId, t.disbursementSubmissionId], foreignColumns: [journalSubmissions.societyId, journalSubmissions.id] }),
+    index("loans_society_status").on(t.societyId, t.status),
+    index("loans_member").on(t.societyId, t.memberId),
+    check("loans_amount_positive", sql`${t.amount} > 0`),
+    check("loans_term", sql`${t.termMonths} between 1 and 120`),
+    check("loans_separation_of_duties", sql`${t.decidedBy} is null or ${t.status} = 'withdrawn' or ${t.decidedBy} <> ${t.appliedBy}`),
+  ],
+);
+
+export const loanGuarantors = pgTable(
+  "loan_guarantors",
+  {
+    societyId: uuid("society_id").notNull(),
+    loanId: uuid("loan_id").notNull(),
+    memberId: uuid("member_id").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.loanId, t.memberId] }),
+    foreignKey({ columns: [t.societyId, t.loanId], foreignColumns: [loans.societyId, loans.id] }),
+    foreignKey({ columns: [t.societyId, t.memberId], foreignColumns: [members.societyId, members.id] }),
   ],
 );

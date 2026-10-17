@@ -1,6 +1,6 @@
 "use client";
 
-import type { Permission } from "@techvaults/core";
+import type { Module, Permission } from "@techvaults/core";
 import { ArrowRight, CornerDownLeft, Search, User } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -10,7 +10,7 @@ import { visibleGroups } from "./nav";
 type Item = { id: string; label: string; hint: string; href: string; kind: "page" | "member" };
 
 /** ⌘K / Ctrl+K: jump to any page, or find a member by name, number or staff ID. */
-export function CommandPalette({ permissions }: { permissions: Permission[] }) {
+export function CommandPalette({ permissions, modules }: { permissions: Permission[]; modules: Module[] }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -21,10 +21,10 @@ export function CommandPalette({ permissions }: { permissions: Permission[] }) {
 
   const pages = useMemo<Item[]>(
     () =>
-      visibleGroups(permissions).flatMap((g) =>
+      visibleGroups(permissions, modules).flatMap((g) =>
         g.items.map((i) => ({ id: i.href, label: i.label, hint: [g.label, i.keywords].filter(Boolean).join(" "), href: i.href, kind: "page" as const })),
       ),
-    [permissions],
+    [permissions, modules],
   );
 
   useEffect(() => {

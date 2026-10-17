@@ -20,6 +20,7 @@ export default async function WorkspaceLayout({ children }: { children: React.Re
     current: { id: ws.society.societyId, name: society.shortName || society.name, roles: ws.society.roles, sector: SECTOR_PROFILES[society.sector].label },
     societies: ws.societies.map((s) => ({ id: s.societyId, name: s.societyName })),
     permissions,
+    modules: society.modules,
     pendingApprovals,
   };
   return (

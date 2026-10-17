@@ -25,6 +25,17 @@ const ACTION_LABEL: Record<string, string> = {
   "account.created": "Account added",
   "account.deactivated": "Account deactivated",
   "account.reactivated": "Account reactivated",
+  "product.proposed": "Product proposed",
+  "product.approved": "Product approved",
+  "product.change_proposed": "Product change proposed",
+  "product.change_approved": "Product change approved",
+  "product.change_rejected": "Product change sent back",
+  "product.retired": "Product retired",
+  "loan.applied": "Loan application recorded",
+  "loan.approved": "Loan approved",
+  "loan.rejected": "Loan declined",
+  "loan.withdrawn": "Loan withdrawn",
+  "loan.disbursement_prepared": "Loan disbursement prepared",
 };
 
 export default async function AuditPage() {

@@ -31,6 +31,9 @@ import {
 import { createMember, listMembers, updateMember } from "./services/members.js";
 import { memberCounts, monthlyFlows } from "./services/reports.js";
 import { createAccount, getSocietySettings, setAccountActive, updateSocietySettings } from "./services/settings.js";
+import { approveProductPolicy, listProducts, proposePolicyChange, proposeProduct } from "./services/products.js";
+import { applyForLoan, decideLoan, disburseLoan, getLoan, loanEligibility, loanPosition, recordRepayment } from "./services/loans.js";
+import { DEFAULT_LOAN_POLICY, kobo } from "@techvaults/core";
 import {
   acceptInvitation,
   changeOfficerRoles,
@@ -498,5 +501,98 @@ describe.runIf(ADMIN)("database guardrails", () => {
         }),
       ),
     ).rejects.toThrow(/active accounts/);
+  });
+
+  it("runs a loan from product approval to closure, with maker-checker at every step", async () => {
+    const secretary = actor(["secretary"], ids.treasurer);
+    const committee = actor(["chairperson"], ids.chair);
+    const loanAcct = await withSociety(app.db, ids.socA, (tx) => createAccount(tx, treasurer(), { code: "1300", name: "Members' loans", class: "asset", isMemberControl: true }));
+    const interestAcct = await withSociety(app.db, ids.socA, (tx) => createAccount(tx, treasurer(), { code: "4200", name: "Interest on loans", class: "income" }));
+    const policy = { ...DEFAULT_LOAN_POLICY, minMembershipMonths: 0, savingsMultiple: 3, guarantorsRequired: 1, minAmount: parseNaira("5000"), maxAmount: parseNaira("500000"), minTermMonths: 1 };
+
+    // Product: proposed by one officer, approved by another.
+    const productId = await withSociety(app.db, ids.socA, (tx) =>
+      proposeProduct(tx, secretary, { kind: "loan", code: "reg-loan", name: "Regular loan", accountId: loanAcct.id, incomeAccountId: interestAcct.id, policy }),
+    );
+    await expect(withSociety(app.db, ids.socA, (tx) => approveProductPolicy(tx, actor(["secretary", "chairperson"], ids.treasurer), productId))).rejects.toThrow(/proposed this cannot/);
+    await withSociety(app.db, ids.socA, (tx) => approveProductPolicy(tx, committee, productId));
+    const [product] = await withSociety(app.db, ids.socA, (tx) => listProducts(tx, treasurer(), { kind: "loan" }));
+    expect(product).toMatchObject({ code: "REG-LOAN", status: "active", version: 1 });
+
+    const [borrower] = await withSociety(app.db, ids.socA, (tx) => listMembers(tx, actor(["secretary"])));
+    const guarantor = await withSociety(app.db, ids.socA, (tx) => createMember(tx, actor(["secretary"]), { memberNo: "A-002", fullName: "Guarantor Member", status: "active" }));
+
+    // Eligibility: savings ₦10,000 × 3 = ₦30,000 limit.
+    const preview = await withSociety(app.db, ids.socA, (tx) => loanEligibility(tx, treasurer(), { memberId: borrower!.id, productId, amount: parseNaira("50000"), termMonths: 4, guarantors: 1 }));
+    expect(preview.eligible).toBe(false);
+    expect(preview.savings).toBe(parseNaira("10000"));
+    await expect(
+      withSociety(app.db, ids.socA, (tx) => applyForLoan(tx, treasurer(), { memberId: borrower!.id, productId, amount: parseNaira("50000"), termMonths: 4, purpose: "School fees", guarantorIds: [guarantor.id] })),
+    ).rejects.toThrow(/at most 3× savings/);
+
+    const loan = await withSociety(app.db, ids.socA, (tx) =>
+      applyForLoan(tx, treasurer(), { memberId: borrower!.id, productId, amount: parseNaira("20000"), termMonths: 4, purpose: "School fees", guarantorIds: [guarantor.id] }),
+    );
+    expect(loan.loanNo).toBe(1);
+    await expect(withSociety(app.db, ids.socA, (tx) => decideLoan(tx, actor(["treasurer", "chairperson"]), loan.id, "approve", ""))).rejects.toThrow(/recorded this application/);
+    await withSociety(app.db, ids.socA, (tx) => decideLoan(tx, committee, loan.id, "approve", "Within policy"));
+
+    // Disbursement is a journal submission; the loan goes live only when it's approved.
+    const { submissionId } = await withSociety(app.db, ids.socA, (tx) =>
+      disburseLoan(tx, treasurer(), loan.id, { disbursedOn: "2026-11-01", firstDueDate: "2026-11-30", bankAccountId: ids.bank, idempotencyKey: "disburse-1" }),
+    );
+    expect((await withSociety(app.db, ids.socA, (tx) => getLoan(tx, treasurer(), loan.id)))!.status).toBe("disbursing");
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, committee, submissionId));
+    let detail = (await withSociety(app.db, ids.socA, (tx) => getLoan(tx, treasurer(), loan.id)))!;
+    expect(detail.status).toBe("active");
+    expect(detail.position.principalOutstanding).toBe(parseNaira("20000"));
+    const first = detail.position.schedule!.instalments[0]!;
+    expect(first.interest).toBe(parseNaira("200")); // 1% a month on ₦20,000
+    const [bankLine] = (await admin`select amount from journal_lines where entry_id = (select id from journal_entries where submission_id = ${submissionId}) and account_id = ${ids.bank}`) as unknown as [{ amount: string }];
+    expect(BigInt(bankLine.amount)).toBe(parseNaira("19800")); // 1% processing fee deducted
+
+    // A missed instalment shows as arrears.
+    const late = await withSociety(app.db, ids.socA, async (tx) => loanPosition(tx, (await tx.select().from(schema.loans).where(sql`id = ${loan.id}`))[0]!, "2026-12-15"));
+    expect(late.arrears).toBe(first.payment);
+    expect(late.daysPastDue).toBe(15);
+
+    // Repayment: interest first, then principal; approved by another officer.
+    const repay = await withSociety(app.db, ids.socA, (tx) => recordRepayment(tx, treasurer(), loan.id, { amount: first.payment, paidOn: "2026-11-30", bankAccountId: ids.bank, idempotencyKey: "repay-1" }));
+    expect(repay.interest).toBe(parseNaira("200"));
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, committee, repay.submissionId));
+    detail = (await withSociety(app.db, ids.socA, (tx) => getLoan(tx, treasurer(), loan.id)))!;
+    expect(detail.position.principalOutstanding).toBe(kobo(parseNaira("20000") - first.principal));
+    expect(detail.position.interestPaid).toBe(parseNaira("200"));
+
+    // The database ties loan lines to the borrower.
+    const s2 = await withSociety(app.db, ids.socA, (tx) => submitJournalEntry(tx, treasurer(), fee("raw-loan-line")));
+    await rejectsWith(
+      withSociety(app.db, ids.socA, async (tx) => {
+        await tx.update(schema.journalSubmissions).set({ status: "approved", decidedBy: ids.chair, decidedAt: new Date() }).where(sql`id = ${s2.id}`);
+        const [e] = await tx
+          .insert(schema.journalEntries)
+          .values({ societyId: ids.socA, entryDate: "2026-10-31", description: "Entrance fee – raw-loan-line", idempotencyKey: "raw-loan-line", submissionId: s2.id, preparedBy: ids.treasurer, postedBy: ids.chair })
+          .returning();
+        await tx.insert(schema.journalLines).values([
+          { societyId: ids.socA, entryId: e!.id, accountId: loanAcct.id, memberId: guarantor.id, loanId: loan.id, side: "debit", amount: 100n },
+          { societyId: ids.socA, entryId: e!.id, accountId: ids.bank, side: "credit", amount: 100n },
+        ]);
+      }),
+      /may only name the borrowing member/,
+    );
+
+    // Paying off the rest closes the loan.
+    const rest = await withSociety(app.db, ids.socA, (tx) =>
+      recordRepayment(tx, treasurer(), loan.id, { amount: detail.position.principalOutstanding, paidOn: "2026-11-30", bankAccountId: ids.bank, idempotencyKey: "repay-2" }),
+    );
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, committee, rest.submissionId));
+    expect((await withSociety(app.db, ids.socA, (tx) => getLoan(tx, treasurer(), loan.id)))!.status).toBe("closed");
+
+    // A policy change doesn't touch existing loans: they keep their snapshot.
+    await withSociety(app.db, ids.socA, (tx) => proposePolicyChange(tx, secretary, productId, { kind: "loan", policy: { ...policy, annualRateBps: 1800 } }));
+    await withSociety(app.db, ids.socA, (tx) => approveProductPolicy(tx, committee, productId));
+    const after = (await withSociety(app.db, ids.socA, (tx) => getLoan(tx, treasurer(), loan.id)))!;
+    expect(after.policy.annualRateBps).toBe(1200);
+    expect(after.policyVersion).toBe(1);
   });
 });
