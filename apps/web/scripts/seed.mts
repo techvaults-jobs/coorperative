@@ -375,8 +375,13 @@ async function seedProducts(slug: string, loanName: string, sampleLoans: boolean
   const [society] = await db.select().from(schema.societies).where(sql`slug = ${slug}`);
   if (!society) return;
   const [admin] = await db.select().from(schema.users).where(sql`email = ${email}`);
-  const [chair] = await db.select().from(schema.users).where(sql`email = ${`chair@${slug}.invalid`}`);
-  if (!admin || !chair) return;
+  if (!admin) {
+    console.log(`Products for ${society.name} skipped: no demo admin.`);
+    return;
+  }
+  // Societies seeded before maker-checker have no demo approver yet; add one (no password, can't sign in).
+  const chair = await ensureUser(`chair@${slug}.invalid`, "Demo Chairperson (no sign-in)", false);
+  await db.insert(schema.societyUsers).values({ societyId: society.id, userId: chair.id, roles: CHAIR_ROLES }).onConflictDoNothing();
   const actor: Actor = { userId: admin.id, societyId: society.id, roles: [...ADMIN_ROLES, "loan_officer"] };
   const approver: Actor = { userId: chair.id, societyId: society.id, roles: ["chairperson", "principal_officer"] };
   const added = await withSociety(db, society.id, async (tx) => {
