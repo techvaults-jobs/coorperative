@@ -1,0 +1,17 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+allowBuilds:
+  sharp: true
+  unrs-resolver: true
+  "@tailwindcss/oxide": true
+  esbuild: true
+minimumReleaseAgeExclude:
+  - lucide-react@1.58.0
+# Security floors for transitive dependencies of next (see pnpm audit).
+overrides:
+  postcss: ">=8.5.30"
+  sharp: ">=0.35.5"
+  esbuild: ">=0.25.0"
+  vitest: ">=4.1.11"
+  tinypool: ">=2.1.2"

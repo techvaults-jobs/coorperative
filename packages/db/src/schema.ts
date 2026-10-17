@@ -1,0 +1,317 @@
+/**
+ * Database schema. Every table that holds society data carries `society_id`, and
+ * row-level security (see migrations/0001_guardrails.sql) restricts each connection
+ * to the society set in `app.society_id`. Amounts are bigint kobo.
+ */
+import { sql } from "drizzle-orm";
+import {
+  bigint,
+  bigserial,
+  boolean,
+  check,
+  date,
+  foreignKey,
+  index,
+  integer,
+  jsonb,
+  pgEnum,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+  unique,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
+
+export const liabilityType = pgEnum("liability_type", ["limited", "unlimited"]);
+export const memberStatus = pgEnum("member_status", ["applicant", "active", "suspended", "exiting", "exited", "deceased"]);
+export const accountClass = pgEnum("account_class", ["asset", "liability", "equity", "income", "expense"]);
+export const entrySide = pgEnum("entry_side", ["debit", "credit"]);
+export const submissionStatus = pgEnum("submission_status", ["pending", "approved", "rejected", "withdrawn"]);
+
+export const societies = pgTable("societies", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  state: text("state").notNull(),
+  /** Which Director of Co-operatives the society is registered with (Act s.1). */
+  registrar: text("registrar").notNull(),
+  registrationNumber: text("registration_number"),
+  /** Cooperative Verification Number from the National Cooperative Smart Registry. */
+  cvn: text("cvn"),
+  liabilityType: liabilityType("liability_type").notNull().default("limited"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Authentication tables follow the field names Better Auth expects. They are not
+// society-scoped: one person can hold roles in several societies (society_users).
+export const users = pgTable("users", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  email: text("email").notNull().unique(),
+  name: text("name").notNull(),
+  emailVerified: boolean("email_verified").notNull().default(false),
+  image: text("image"),
+  twoFactorEnabled: boolean("two_factor_enabled").notNull().default(false),
+  isPlatformStaff: boolean("is_platform_staff").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    token: text("token").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("sessions_user").on(t.userId)],
+);
+
+export const accounts = pgTable(
+  "accounts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    accountId: text("account_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    idToken: text("id_token"),
+    accessTokenExpiresAt: timestamp("access_token_expires_at", { withTimezone: true }),
+    refreshTokenExpiresAt: timestamp("refresh_token_expires_at", { withTimezone: true }),
+    scope: text("scope"),
+    password: text("password"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("accounts_user").on(t.userId)],
+);
+
+export const verifications = pgTable(
+  "verifications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    identifier: text("identifier").notNull(),
+    value: text("value").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("verifications_identifier").on(t.identifier)],
+);
+
+export const twoFactors = pgTable(
+  "two_factors",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    secret: text("secret").notNull(),
+    backupCodes: text("backup_codes").notNull(),
+    verified: boolean("verified").notNull().default(true),
+    failedVerificationCount: integer("failed_verification_count").notNull().default(0),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+  },
+  (t) => [index("two_factors_user").on(t.userId), index("two_factors_secret").on(t.secret)],
+);
+
+export const societyUsers = pgTable(
+  "society_users",
+  {
+    societyId: uuid("society_id").notNull().references(() => societies.id),
+    userId: uuid("user_id").notNull().references(() => users.id),
+    roles: text("roles").array().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.societyId, t.userId] })],
+);
+
+export const members = pgTable(
+  "members",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    societyId: uuid("society_id").notNull().references(() => societies.id),
+    memberNo: text("member_no").notNull(),
+    fullName: text("full_name").notNull(),
+    staffId: text("staff_id"),
+    department: text("department"),
+    phone: text("phone"),
+    email: text("email"),
+    status: memberStatus("status").notNull().default("applicant"),
+    joinedOn: date("joined_on"),
+    /** National cooperative member ID, once issued. */
+    coopId: text("coop_id"),
+    /** Nominee under Act s.18 – kept separate from next of kin. */
+    nomineeName: text("nominee_name"),
+    nomineeRelationship: text("nominee_relationship"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("members_society_member_no").on(t.societyId, t.memberNo),
+    uniqueIndex("members_society_staff_id").on(t.societyId, t.staffId),
+    // Composite key so child rows can prove they belong to the same society.
+    unique("members_society_id_id").on(t.societyId, t.id),
+  ],
+);
+
+export const ledgerAccounts = pgTable(
+  "ledger_accounts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    societyId: uuid("society_id").notNull().references(() => societies.id),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    class: accountClass("class").notNull(),
+    /** Control accounts carry a member sub-ledger (savings, shares, loans). */
+    isMemberControl: boolean("is_member_control").notNull().default(false),
+    isActive: boolean("is_active").notNull().default(true),
+  },
+  (t) => [
+    uniqueIndex("ledger_accounts_society_code").on(t.societyId, t.code),
+    unique("ledger_accounts_society_id_id").on(t.societyId, t.id),
+  ],
+);
+
+export const journalEntries = pgTable(
+  "journal_entries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    societyId: uuid("society_id").notNull().references(() => societies.id),
+    /** Numbered 1, 2, 3… per society with no gaps, by a trigger at insert (migrations/0005). */
+    entryNo: bigint("entry_no", { mode: "bigint" }).notNull().default(sql`0`),
+    entryDate: date("entry_date").notNull(),
+    description: text("description").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    reversesEntryId: uuid("reverses_entry_id"),
+    policyVersionId: uuid("policy_version_id"),
+    /** The approved submission this entry came from. Entries posted before maker-checker have none. */
+    submissionId: uuid("submission_id"),
+    preparedBy: uuid("prepared_by").notNull().references(() => users.id),
+    /** The approver. Since maker-checker, always someone other than the preparer. */
+    postedBy: uuid("posted_by").notNull().references(() => users.id),
+    postedAt: timestamp("posted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("journal_entries_society_idempotency").on(t.societyId, t.idempotencyKey),
+    unique("journal_entries_society_id_id").on(t.societyId, t.id),
+    // An entry can be reversed at most once.
+    uniqueIndex("journal_entries_reverses_once").on(t.reversesEntryId),
+    uniqueIndex("journal_entries_society_entry_no").on(t.societyId, t.entryNo),
+    uniqueIndex("journal_entries_submission").on(t.submissionId),
+    foreignKey({ columns: [t.societyId, t.reversesEntryId], foreignColumns: [t.societyId, t.id] }),
+    index("journal_entries_society_date").on(t.societyId, t.entryDate),
+  ],
+);
+
+/** Line of a submission awaiting approval; amounts are kobo as decimal strings (JSON has no bigint). */
+export interface SubmissionLine {
+  accountId: string;
+  side: "debit" | "credit";
+  amount: string;
+  memberId?: string;
+  memo?: string;
+}
+
+/**
+ * Journal entries waiting for a second officer. Only the decision columns can change, and
+ * only once (see migrations/0005); approval posts the entry to journal_entries.
+ */
+export const journalSubmissions = pgTable(
+  "journal_submissions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    societyId: uuid("society_id").notNull().references(() => societies.id),
+    entryDate: date("entry_date").notNull(),
+    description: text("description").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    lines: jsonb("lines").$type<SubmissionLine[]>().notNull(),
+    reversesEntryId: uuid("reverses_entry_id"),
+    status: submissionStatus("status").notNull().default("pending"),
+    preparedBy: uuid("prepared_by").notNull().references(() => users.id),
+    preparedAt: timestamp("prepared_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedBy: uuid("decided_by").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decisionReason: text("decision_reason"),
+  },
+  (t) => [
+    uniqueIndex("journal_submissions_society_idempotency").on(t.societyId, t.idempotencyKey),
+    unique("journal_submissions_society_id_id").on(t.societyId, t.id),
+    foreignKey({ columns: [t.societyId, t.reversesEntryId], foreignColumns: [journalEntries.societyId, journalEntries.id] }),
+    // At most one reversal of an entry can be waiting at a time.
+    uniqueIndex("journal_submissions_pending_reversal").on(t.reversesEntryId).where(sql`status = 'pending'`),
+    index("journal_submissions_society_status").on(t.societyId, t.status),
+    check("journal_submissions_decision", sql`(${t.status} = 'pending') = (${t.decidedBy} is null)`),
+  ],
+);
+
+export const journalLines = pgTable(
+  "journal_lines",
+  {
+    id: bigserial("id", { mode: "bigint" }).primaryKey(),
+    societyId: uuid("society_id").notNull(),
+    entryId: uuid("entry_id").notNull(),
+    accountId: uuid("account_id").notNull(),
+    memberId: uuid("member_id"),
+    side: entrySide("side").notNull(),
+    amount: bigint("amount", { mode: "bigint" }).notNull(),
+    memo: text("memo"),
+  },
+  (t) => [
+    check("journal_lines_amount_positive", sql`${t.amount} > 0`),
+    foreignKey({ columns: [t.societyId, t.entryId], foreignColumns: [journalEntries.societyId, journalEntries.id] }),
+    foreignKey({ columns: [t.societyId, t.accountId], foreignColumns: [ledgerAccounts.societyId, ledgerAccounts.id] }),
+    foreignKey({ columns: [t.societyId, t.memberId], foreignColumns: [members.societyId, members.id] }),
+    index("journal_lines_entry").on(t.entryId),
+    index("journal_lines_account").on(t.societyId, t.accountId),
+    index("journal_lines_member").on(t.societyId, t.memberId),
+  ],
+);
+
+export const auditEvents = pgTable(
+  "audit_events",
+  {
+    societyId: uuid("society_id").notNull().references(() => societies.id),
+    sequence: integer("sequence").notNull(),
+    actorId: uuid("actor_id").notNull(),
+    action: text("action").notNull(),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true, mode: "string" }).notNull(),
+    before: jsonb("before"),
+    after: jsonb("after"),
+    reason: text("reason"),
+    prevHash: text("prev_hash").notNull(),
+    hash: text("hash").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.societyId, t.sequence] })],
+);
+
+/**
+ * Invitations for officers to join a society. Only a SHA-256 hash of the link token is
+ * stored, so the database alone cannot be used to accept an invitation.
+ */
+export const officerInvitations = pgTable(
+  "officer_invitations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    societyId: uuid("society_id").notNull().references(() => societies.id),
+    email: text("email").notNull(),
+    roles: text("roles").array().notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    invitedBy: uuid("invited_by").notNull().references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    acceptedBy: uuid("accepted_by").references(() => users.id),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedBy: uuid("revoked_by").references(() => users.id),
+  },
+  (t) => [
+    index("officer_invitations_society").on(t.societyId),
+    check("officer_invitations_has_roles", sql`cardinality(${t.roles}) > 0`),
+  ],
+);
