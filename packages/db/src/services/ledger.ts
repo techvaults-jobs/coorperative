@@ -250,6 +250,13 @@ async function decide(tx: Tx, actor: Actor, submissionId: string, status: "rejec
   });
 }
 
+/** Number of posted entries in the society in scope. */
+export async function countJournal(tx: Tx, actor: Actor): Promise<number> {
+  if (!can(actor.roles, "ledger.read")) throw new PermissionError("Your role cannot view the ledger");
+  const [row] = await tx.execute<{ n: number }>(sql`select count(*)::int as n from journal_entries`);
+  return Number(row?.n ?? 0);
+}
+
 export interface SubmissionView {
   id: string;
   status: SubmissionStatus;
@@ -431,7 +438,7 @@ export interface JournalView {
 }
 
 /** Most recent journal entries with their lines, newest first. */
-export async function listJournal(tx: Tx, actor: Actor, opts: { limit?: number; memberId?: string } = {}): Promise<JournalView[]> {
+export async function listJournal(tx: Tx, actor: Actor, opts: { limit?: number; offset?: number; memberId?: string } = {}): Promise<JournalView[]> {
   if (!can(actor.roles, "ledger.read") && !opts.memberId) throw new PermissionError("Your role cannot view the ledger");
   const limit = Math.min(opts.limit ?? 50, 200);
   const entries = await tx.execute<{
@@ -453,7 +460,7 @@ export async function listJournal(tx: Tx, actor: Actor, opts: { limit?: number; 
     left join journal_entries r on r.reverses_entry_id = e.id
     where ${opts.memberId ? sql`exists (select 1 from journal_lines l where l.entry_id = e.id and l.member_id = ${opts.memberId})` : sql`true`}
     order by e.entry_no desc
-    limit ${limit}
+    limit ${limit} offset ${Math.max(0, Math.floor(opts.offset ?? 0))}
   `);
   if (entries.length === 0) return [];
   const ids = entries.map((e) => e.id);

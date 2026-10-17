@@ -43,6 +43,13 @@
       "when": 1792208576432,
       "tag": "0005_approval_guardrails",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792235891240,
+      "tag": "0006_society_configuration",
+      "breakpoints": true
     }
   ]
 }

@@ -36,7 +36,8 @@ export function SignInForm() {
   }
 
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-4">
+    // method="post" so that if JavaScript hasn't loaded, a native submit can never put the password in the URL.
+    <form onSubmit={onSubmit} method="post" className="flex flex-col gap-4">
       <Field label="Email" htmlFor="email">
         <Input id="email" name="email" type="email" autoComplete="username" required />
       </Field>

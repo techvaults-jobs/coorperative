@@ -40,16 +40,17 @@ export const PERMISSIONS = [
   "settings.manage",
   "settings.approve",
   "officers.manage",
+  "accounts.manage",
   "audit.read",
   "self.read",
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
 const GRANTS: Record<Role, readonly Permission[]> = {
-  principal_officer: ["members.read", "ledger.read", "ledger.approve", "settings.approve", "officers.manage", "audit.read"],
+  principal_officer: ["members.read", "ledger.read", "ledger.approve", "settings.approve", "officers.manage", "accounts.manage", "audit.read"],
   chairperson: ["members.read", "ledger.read", "ledger.approve", "loans.approve", "settings.approve", "audit.read"],
   secretary: ["members.read", "members.write", "settings.manage", "officers.manage"],
-  treasurer: ["members.read", "ledger.read", "ledger.prepare", "ledger.reverse", "payroll.manage"],
+  treasurer: ["members.read", "ledger.read", "ledger.prepare", "ledger.reverse", "payroll.manage", "accounts.manage"],
   loan_officer: ["members.read", "loans.prepare", "ledger.read"],
   loan_committee: ["members.read", "loans.approve", "ledger.read"],
   payroll_officer: ["payroll.manage"],

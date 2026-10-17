@@ -7,7 +7,7 @@ import { Button, buttonClass } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
 import { addMember, type FormState } from "../actions";
 
-export function AddMemberForm() {
+export function AddMemberForm({ terms }: { terms: { externalId: string; group: string } }) {
   const [state, action, pending] = useActionState<FormState, FormData>(addMember, { ok: false });
   const form = useRef<HTMLFormElement>(null);
   useEffect(() => {
@@ -24,10 +24,10 @@ export function AddMemberForm() {
         <Field label="Full name *" htmlFor="fullName" error={err.fullName}>
           <Input id="fullName" name="fullName" required autoComplete="off" aria-invalid={!!err.fullName} />
         </Field>
-        <Field label="Staff ID" htmlFor="staffId" hint="Used to match payroll deductions.">
+        <Field label={terms.externalId} htmlFor="staffId" hint="Must be unique. Used to match deductions and remittances.">
           <Input id="staffId" name="staffId" className="font-mono" />
         </Field>
-        <Field label="Department" htmlFor="department">
+        <Field label={terms.group} htmlFor="department">
           <Input id="department" name="department" />
         </Field>
         <Field label="Phone" htmlFor="phone">

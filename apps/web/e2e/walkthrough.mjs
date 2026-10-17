@@ -101,6 +101,16 @@ try {
   }
   await page.waitForURL(/\/overview/, { timeout: 15000 });
   check("overview opens after sign-in", true);
+  // The checks below use the staff society's seeded figures.
+  const society = page.locator("aside select#society").first();
+  if (await society.count()) {
+    const staff = await society.locator("option", { hasText: "Staff" }).getAttribute("value");
+    if ((await society.inputValue()) !== staff) {
+      await Promise.all([page.waitForURL(/\/overview/), society.selectOption(staff)]);
+      await page.waitForLoadState("networkidle");
+    }
+    check("society switcher changes society", (await page.getByText("Demo Staff Cooperative").count()) > 0);
+  }
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/overview.png`, fullPage: true });
 
   // Sign out and back in: two-factor must now be asked for
@@ -157,7 +167,7 @@ try {
   await page.waitForURL(/\/members\/[0-9a-f-]{36}/);
   check("command palette finds a member", true);
   const prepare = async (description, amount) => {
-    await page.goto(`${BASE}/ledger`, { waitUntil: "networkidle" });
+    await page.goto(`${BASE}/ledger/new`, { waitUntil: "networkidle" });
     await page.fill("#description", description);
     await page.selectOption("#debitAccountId", { label: "5200 · Stationery and printing" });
     await page.selectOption("#creditAccountId", { label: "1100 · Bank – current account" });
@@ -173,10 +183,11 @@ try {
   await page.getByText(/Submitted for approval|Already submitted/).waitFor({ timeout: 10000 });
   check("treasurer can submit a balanced entry for approval", true);
   await page.waitForTimeout(1500);
-  await page.reload({ waitUntil: "networkidle" });
+  await page.goto(`${BASE}/ledger`, { waitUntil: "networkidle" });
   check("a submitted entry is not in the journal yet", (await page.locator("article", { hasText: `E2E stationery ${stamp}` }).count()) === 0);
   check("journal says entries are waiting", (await page.getByText(/waiting for approval and not yet in the journal/).count()) === 1);
 
+  await page.goto(`${BASE}/ledger/new`, { waitUntil: "networkidle" });
   await page.selectOption("#debitAccountId", { label: "1100 · Bank – current account" });
   await page.selectOption("#creditAccountId", { label: "2100 · Members' ordinary savings" });
   await page.locator("#memberId").waitFor();
@@ -282,6 +293,25 @@ try {
   await chair.goto(`${BASE}/overview`, { waitUntil: "networkidle" });
   check("a removed officer loses access at once", chair.url().includes("/no-society"));
   await chairContext.close();
+
+  // Configuration: the society's own words and colour
+  await page.goto(`${BASE}/settings/sector`, { waitUntil: "networkidle" });
+  await page.fill("#group", "Faculty or unit");
+  await page.click("form button[type=submit]");
+  await page.getByText("Saved.").waitFor({ timeout: 10000 });
+  await page.goto(`${BASE}/members`, { waitUntil: "networkidle" });
+  const headers = await page.locator("thead th").allInnerTexts();
+  check("the society's own words label the register", headers.some((h) => h.toLowerCase() === "faculty or unit"), headers.join("|"));
+  await page.goto(`${BASE}/settings/branding`, { waitUntil: "networkidle" });
+  await page.fill("#brandColor", "#ffe066");
+  await page.click("form button[type=submit] >> text=Save changes");
+  await page.getByText("too light").waitFor({ timeout: 10000 });
+  check("a brand colour too light for white text is refused", true);
+  await page.getByRole("radio", { name: "Royal" }).click();
+  await page.click("form button[type=submit] >> text=Save changes");
+  await page.getByText("Saved.").waitFor({ timeout: 10000 });
+  const accent = await page.evaluate(() => getComputedStyle(document.querySelector("main")).getPropertyValue("--accent").trim());
+  check("the society's brand colour themes the workspace", accent === "#5b3fbf", accent);
 
   // Mobile layout
   await page.setViewportSize({ width: 390, height: 800 });

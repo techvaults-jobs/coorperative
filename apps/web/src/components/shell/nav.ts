@@ -1,5 +1,5 @@
 import type { Permission } from "@techvaults/core";
-import { BookOpen, ClipboardCheck, LayoutDashboard, Scale, ShieldCheck, UserCog, Users, type LucideIcon } from "lucide-react";
+import { BookOpen, ClipboardCheck, LayoutDashboard, Scale, Settings, ShieldCheck, UserCog, Users, type LucideIcon } from "lucide-react";
 
 export interface NavItem {
   href: string;
@@ -26,6 +26,7 @@ export const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     items: [
       { href: "/officers", label: "Officers", icon: UserCog, anyOf: ["officers.manage"], keywords: "users roles invite" },
       { href: "/audit", label: "Audit trail", icon: ShieldCheck, anyOf: ["audit.read"], keywords: "history log" },
+      { href: "/settings", label: "Settings", icon: Settings, anyOf: ["settings.manage", "accounts.manage"], keywords: "society profile branding colour sector modules chart of accounts" },
     ],
   },
 ];

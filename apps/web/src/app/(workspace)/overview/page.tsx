@@ -70,7 +70,7 @@ export default async function OverviewPage() {
               </Link>
             )}
             {hasPermission(ws, "ledger.prepare") && (
-              <Link href="/ledger#prepare" className={buttonClass("primary")}>
+              <Link href="/ledger/new" className={buttonClass("primary")}>
                 <BookOpen className="size-4" aria-hidden />
                 Prepare entry
               </Link>

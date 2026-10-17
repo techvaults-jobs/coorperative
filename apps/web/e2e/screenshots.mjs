@@ -33,7 +33,7 @@ for (const [theme, vp, tag] of [["light", { width: 1440, height: 900 }, "light"]
     }
   }
   if (tag === "light") {
-    const m = await page.goto(`${BASE}/members`, { waitUntil: "networkidle" });
+    await page.goto(`${BASE}/members`, { waitUntil: "networkidle" });
     await page.click("tbody tr a >> nth=2");
     await page.waitForLoadState("networkidle");
     await page.screenshot({ path: `${OUT}/light-member.png`, fullPage: true });
@@ -41,6 +41,26 @@ for (const [theme, vp, tag] of [["light", { width: 1440, height: 900 }, "light"]
     await page.keyboard.type("chi");
     await page.waitForTimeout(600);
     await page.screenshot({ path: `${OUT}/light-palette.png` });
+  }
+  await ctx.close();
+}
+// A second society, if the account has one: switch to it and capture its pages and settings.
+{
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  await ctx.addCookies(cookies);
+  const page = await ctx.newPage();
+  page.on("pageerror", (e) => errors.push(`${page.url()}: ${e.message}`));
+  await page.goto(`${BASE}/overview`, { waitUntil: "networkidle" });
+  const select = page.locator("aside select#society").first();
+  if (await select.count()) {
+    const values = await select.locator("option").evaluateAll((os) => os.map((o) => o.value));
+    await Promise.all([page.waitForURL(/overview/), select.selectOption(values.at(-1))]);
+    await page.waitForLoadState("networkidle");
+    for (const path of ["/overview", "/members", "/settings", "/settings/branding", "/settings/sector", "/settings/accounts"]) {
+      await page.goto(`${BASE}${path}`, { waitUntil: "networkidle" });
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: `${OUT}/society2-${path.slice(1).replaceAll("/", "-")}.png`, fullPage: true });
+    }
   }
   await ctx.close();
 }

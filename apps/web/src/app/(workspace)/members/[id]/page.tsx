@@ -10,6 +10,7 @@ import { StatCard } from "@/components/ui/stat";
 import { ROW_HOVER, Table, Td, Th } from "@/components/ui/table";
 import { MEMBER_STATUS } from "@/lib/member-status";
 import { hasPermission, inSociety, requireWorkspace } from "@/lib/session";
+import { requireSociety } from "@/lib/society";
 
 export const metadata = { title: "Member" };
 
@@ -19,6 +20,7 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
   const ws = await requireWorkspace();
   if (!hasPermission(ws, "members.read")) return <EmptyState title="Your role doesn't include the member register." />;
   const { id } = await params;
+  const { terminology: terms } = await requireSociety();
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
   const data = await inSociety(ws, async (tx) => {
     const member = await getMember(tx, ws.actor, id);
@@ -34,8 +36,8 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
   const { member, balances, entries } = data;
   const status = MEMBER_STATUS[member.status];
   const details = [
-    { icon: Hash, label: "Staff ID", value: member.staffId },
-    { icon: Briefcase, label: "Department", value: member.department },
+    { icon: Hash, label: terms.externalId, value: member.staffId },
+    { icon: Briefcase, label: terms.group, value: member.department },
     { icon: Phone, label: "Phone", value: member.phone },
     { icon: Mail, label: "Email", value: member.email },
     { icon: CalendarDays, label: "Joined", value: member.joinedOn },
@@ -57,7 +59,7 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
               </Badge>
             </div>
             <p className="text-muted text-sm">
-              {[member.department, member.joinedOn && `member since ${member.joinedOn}`].filter(Boolean).join(" · ") || "No department recorded"}
+              {[member.department, member.joinedOn && `member since ${member.joinedOn}`].filter(Boolean).join(" · ") || `No ${terms.group.toLowerCase()} recorded`}
             </p>
           </div>
         </CardBody>

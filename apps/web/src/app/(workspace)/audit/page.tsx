@@ -21,6 +21,10 @@ const ACTION_LABEL: Record<string, string> = {
   "officer.joined": "Officer joined",
   "officer.roles_changed": "Officer roles changed",
   "officer.removed": "Officer access removed",
+  "society.settings_changed": "Society settings changed",
+  "account.created": "Account added",
+  "account.deactivated": "Account deactivated",
+  "account.reactivated": "Account reactivated",
 };
 
 export default async function AuditPage() {

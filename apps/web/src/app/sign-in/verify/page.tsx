@@ -33,7 +33,7 @@ export default function VerifyPage() {
       title="Two-factor check"
       description={useBackup ? "Enter one of the backup codes you saved when you set up two-factor authentication." : "Enter the 6-digit code from your authenticator app."}
     >
-      <form onSubmit={onSubmit} className="flex flex-col gap-4">
+      <form onSubmit={onSubmit} method="post" className="flex flex-col gap-4">
         <Field label={useBackup ? "Backup code" : "Authentication code"} htmlFor="code" error={error}>
           <Input
             id="code"

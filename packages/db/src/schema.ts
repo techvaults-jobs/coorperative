@@ -28,6 +28,7 @@ export const liabilityType = pgEnum("liability_type", ["limited", "unlimited"]);
 export const memberStatus = pgEnum("member_status", ["applicant", "active", "suspended", "exiting", "exited", "deceased"]);
 export const accountClass = pgEnum("account_class", ["asset", "liability", "equity", "income", "expense"]);
 export const entrySide = pgEnum("entry_side", ["debit", "credit"]);
+export const societySector = pgEnum("society_sector", ["workplace", "agricultural", "transport", "market", "multipurpose", "credit_union", "housing", "other"]);
 export const submissionStatus = pgEnum("submission_status", ["pending", "approved", "rejected", "withdrawn"]);
 
 export const societies = pgTable("societies", {
@@ -41,8 +42,24 @@ export const societies = pgTable("societies", {
   /** Cooperative Verification Number from the National Cooperative Smart Registry. */
   cvn: text("cvn"),
   liabilityType: liabilityType("liability_type").notNull().default("limited"),
+  sector: societySector("sector").notNull().default("workplace"),
+  shortName: text("short_name"),
+  address: text("address"),
+  phone: text("phone"),
+  email: text("email"),
+  /** #rrggbb, at least 4.5:1 against white (checked in core/configuration). Null uses the product colour. */
+  brandColor: text("brand_color"),
+  /** 1–12; the month the society's financial year starts. */
+  financialYearStart: integer("financial_year_start").notNull().default(1),
+  /** Words that override the sector defaults (core Terminology). */
+  terminology: jsonb("terminology").$type<Record<string, string>>().notNull().default({}),
+  /** Modules switched on. Null means the sector profile's defaults. */
+  modules: text("modules").array(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [
+  check("societies_brand_color", sql`${t.brandColor} is null or ${t.brandColor} ~ '^#[0-9a-f]{6}$'`),
+  check("societies_financial_year_start", sql`${t.financialYearStart} between 1 and 12`),
+]);
 
 // Authentication tables follow the field names Better Auth expects. They are not
 // society-scoped: one person can hold roles in several societies (society_users).

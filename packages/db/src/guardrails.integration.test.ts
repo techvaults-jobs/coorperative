@@ -30,6 +30,7 @@ import {
 } from "./services/ledger.js";
 import { createMember, listMembers, updateMember } from "./services/members.js";
 import { memberCounts, monthlyFlows } from "./services/reports.js";
+import { createAccount, getSocietySettings, setAccountActive, updateSocietySettings } from "./services/settings.js";
 import {
   acceptInvitation,
   changeOfficerRoles,
@@ -449,5 +450,53 @@ describe.runIf(ADMIN)("database guardrails", () => {
     const counts = await withSociety(app.db, ids.socA, (tx) => memberCounts(tx, actor(["secretary"])));
     expect(counts).toEqual({ total: 1, byStatus: { active: 1 } });
     await expect(withSociety(app.db, ids.socA, (tx) => monthlyFlows(tx, actor(["secretary"])))).rejects.toBeInstanceOf(PermissionError);
+  });
+
+  it("configures a society by sector, words, colour and modules, with an audit diff", async () => {
+    const secretary = actor(["secretary"]);
+    const start = await withSociety(app.db, ids.socA, (tx) => getSocietySettings(tx, treasurer()));
+    expect(start).toMatchObject({ sector: "workplace", terminology: { externalId: "Staff ID" }, modulesCustomised: false });
+
+    const after = await withSociety(app.db, ids.socA, (tx) =>
+      updateSocietySettings(tx, secretary, { sector: "agricultural", terminology: { group: "Village" }, brandColor: "#1D5FAE", modules: ["savings", "loans"] }),
+    );
+    expect(after).toMatchObject({
+      sector: "agricultural",
+      brandColor: "#1d5fae",
+      terminology: { externalId: "Farmer ID", group: "Village", contribution: "Contribution" },
+      modules: ["savings", "loans"],
+      modulesCustomised: true,
+    });
+    await expect(withSociety(app.db, ids.socA, (tx) => updateSocietySettings(tx, secretary, { brandColor: "#ffee00" }))).rejects.toThrow(/too light/);
+    await expect(withSociety(app.db, ids.socA, (tx) => updateSocietySettings(tx, treasurer(), { name: "Hijack" }))).rejects.toBeInstanceOf(PermissionError);
+    // The database refuses a malformed colour even if the app is bypassed.
+    await rejectsWith(withSociety(app.db, ids.socA, (tx) => tx.execute(sql`update societies set brand_color = 'red'`)), /societies_brand_color/);
+
+    const reset = await withSociety(app.db, ids.socA, (tx) => updateSocietySettings(tx, secretary, { modules: null }));
+    expect(reset.modules).toEqual(["savings", "shares", "loans", "levies"]); // agricultural defaults
+    const [event] = await withSociety(app.db, ids.socA, (tx) => listAuditEvents(tx, ids.socA, 1));
+    expect(event).toMatchObject({ action: "society.settings_changed", before: { modules: ["savings", "loans"] }, after: { modules: null } });
+    // Society B is untouched.
+    const [b] = (await admin`select sector, brand_color from societies where id = ${ids.socB}`) as unknown as [{ sector: string; brand_color: string | null }];
+    expect(b).toEqual({ sector: "workplace", brand_color: null });
+  });
+
+  it("manages the chart of accounts; inactive accounts can't take new entries", async () => {
+    const account = await withSociety(app.db, ids.socA, (tx) => createAccount(tx, treasurer(), { code: "5300", name: "Meeting expenses", class: "expense" }));
+    await expect(withSociety(app.db, ids.socA, (tx) => createAccount(tx, treasurer(), { code: "5300", name: "Duplicate", class: "expense" }))).rejects.toThrow(/already in use/);
+    await expect(withSociety(app.db, ids.socA, (tx) => createAccount(tx, treasurer(), { code: "1500", name: "Wrong class", class: "income" }))).rejects.toThrow(/asset accounts/);
+    await expect(withSociety(app.db, ids.socA, (tx) => createAccount(tx, actor(["secretary"]), { code: "5400", name: "Nope", class: "expense" }))).rejects.toBeInstanceOf(PermissionError);
+    await withSociety(app.db, ids.socA, (tx) => setAccountActive(tx, treasurer(), account.id, false));
+    await expect(
+      withSociety(app.db, ids.socA, (tx) =>
+        submitJournalEntry(tx, treasurer(), {
+          ...fee("inactive-account"),
+          lines: [
+            { accountId: account.id, side: "debit", amount: parseNaira("1") },
+            { accountId: ids.bank, side: "credit", amount: parseNaira("1") },
+          ],
+        }),
+      ),
+    ).rejects.toThrow(/active accounts/);
   });
 });

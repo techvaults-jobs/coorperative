@@ -10,6 +10,7 @@ import { EmptyState, PageHeader } from "@/components/ui/page-header";
 import { LinkTabs } from "@/components/ui/tabs";
 import { ROW_HOVER, Table, Td, Th } from "@/components/ui/table";
 import { hasPermission, inSociety, requireWorkspace } from "@/lib/session";
+import { requireSociety } from "@/lib/society";
 
 export const metadata = { title: "Members" };
 
@@ -18,6 +19,7 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
   const ws = await requireWorkspace();
   if (!hasPermission(ws, "members.read")) return <EmptyState title="Your role doesn't include the member register." />;
   const { q, status = "all" } = await searchParams;
+  const { terminology: terms } = await requireSociety();
   const all = await inSociety(ws, (tx) => listMembers(tx, ws.actor, q ? { search: q } : {}));
   const members = status === "all" ? all : all.filter((m) => m.status === status);
   const count = (s: string) => all.filter((m) => m.status === s).length;
@@ -50,7 +52,7 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
             <label htmlFor="q" className="sr-only">
               Search members
             </label>
-            <Input id="q" name="q" defaultValue={q} placeholder="Name, member no. or staff ID" className="pl-9" />
+            <Input id="q" name="q" defaultValue={q} placeholder={`Name, member no. or ${terms.externalId.toLowerCase()}`} className="pl-9" />
           </form>
         </div>
         {members.length === 0 ? (
@@ -63,8 +65,8 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
               <tr>
                 <Th>Member</Th>
                 <Th>Member no.</Th>
-                <Th className="hidden md:table-cell">Staff ID</Th>
-                <Th className="hidden lg:table-cell">Department</Th>
+                <Th className="hidden md:table-cell">{terms.externalId}</Th>
+                <Th className="hidden lg:table-cell">{terms.group}</Th>
                 <Th className="hidden sm:table-cell">Joined</Th>
                 <Th>Status</Th>
               </tr>

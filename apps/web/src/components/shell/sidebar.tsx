@@ -12,7 +12,7 @@ import { visibleGroups } from "./nav";
 
 export interface ShellProps {
   user: { name: string; email: string };
-  current: { id: string; name: string; roles: string[] };
+  current: { id: string; name: string; roles: string[]; sector: string };
   societies: { id: string; name: string }[];
   permissions: Permission[];
   pendingApprovals: number;
@@ -27,7 +27,10 @@ export function SidebarContent({ current, societies, permissions, pendingApprova
       </Link>
 
       <div className="border-sidebar-border bg-sidebar-2 rounded-xl border p-3">
-        <p className="text-sidebar-muted text-[10px] font-semibold tracking-widest uppercase">Society</p>
+        <p className="text-sidebar-muted flex items-center gap-1.5 text-[10px] font-semibold tracking-widest uppercase">
+          <span className="bg-sidebar-accent size-1.5 rounded-full" aria-hidden />
+          {current.sector}
+        </p>
         {societies.length > 1 ? (
           <form action={switchSociety} className="relative mt-1">
             <label htmlFor="society" className="sr-only">

@@ -201,3 +201,22 @@ body {
     background: white;
   }
 }
+
+/* A society's own colour (set as --brand on the workspace). Derived tints are redeclared
+   here because custom properties resolve where they are declared. Dark mode lightens it. */
+.branded {
+  --accent: var(--brand);
+  --accent-soft: color-mix(in oklab, var(--accent) 10%, var(--surface));
+  --accent-strong: color-mix(in oklab, var(--accent) 82%, black);
+  --sidebar-accent: color-mix(in oklab, var(--accent) 55%, white);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .branded {
+    --accent: color-mix(in oklab, var(--brand) 62%, white);
+    --accent-strong: color-mix(in oklab, var(--accent) 80%, white);
+  }
+}
+:root[data-theme="dark"] .branded {
+  --accent: color-mix(in oklab, var(--brand) 62%, white);
+  --accent-strong: color-mix(in oklab, var(--accent) 80%, white);
+}
