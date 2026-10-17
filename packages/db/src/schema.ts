@@ -523,3 +523,17 @@ export const payrollRemittanceLines = pgTable(
     index("payroll_remittance_lines_run").on(t.runId),
   ],
 );
+
+/** Requests for a demo from the public website. Platform-level: not tied to any society. */
+export const demoRequests = pgTable("demo_requests", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  society: text("society").notNull(),
+  role: text("role"),
+  email: text("email").notNull(),
+  phone: text("phone"),
+  sector: text("sector"),
+  members: text("members"),
+  message: text("message"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
