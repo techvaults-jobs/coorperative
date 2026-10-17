@@ -1,4 +1,5 @@
-# Builds the web app from the pnpm workspace. Migrations run as Railway's pre-deploy step.
+# Builds the web app from the pnpm workspace. On start, migrations run before the server
+# (safe while the service runs a single instance; move to a release step before scaling out).
 FROM node:22-bookworm-slim
 ENV NEXT_TELEMETRY_DISABLED=1 \
     PNPM_HOME=/pnpm \
@@ -18,4 +19,4 @@ RUN pnpm --filter @techvaults/web build
 ENV NODE_ENV=production
 USER node
 EXPOSE 3000
-CMD ["pnpm", "--filter", "@techvaults/web", "start"]
+CMD ["pnpm", "start"]
