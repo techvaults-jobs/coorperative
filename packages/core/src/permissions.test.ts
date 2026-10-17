@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { can, canApprove, platformStaffCanRead } from "./permissions.js";
+import { can, canApprove, OFFICER_ROLES, platformStaffCanRead, ROLES } from "./permissions.js";
 
 describe("permissions", () => {
   it("separates preparing from approving ledger entries", () => {
@@ -8,10 +8,23 @@ describe("permissions", () => {
     expect(can(["chairperson"], "ledger.approve")).toBe(true);
   });
 
+  it("lets no role post to the journal without a second officer", () => {
+    for (const role of ROLES) {
+      if (can([role], "ledger.prepare") || can([role], "ledger.reverse")) expect(can([role], "ledger.approve"), role).toBe(false);
+    }
+  });
+
+  it("treats every role except member as an officer role", () => {
+    expect(OFFICER_ROLES).not.toContain("member");
+    expect(OFFICER_ROLES).toHaveLength(ROLES.length - 1);
+    expect(can(["secretary"], "officers.manage")).toBe(true);
+    expect(can(["treasurer"], "officers.manage")).toBe(false);
+  });
+
   it("gives auditors read-only access", () => {
     expect(can(["auditor"], "ledger.read")).toBe(true);
     expect(can(["auditor"], "audit.read")).toBe(true);
-    expect(can(["auditor"], "ledger.post")).toBe(false);
+    expect(can(["auditor"], "ledger.prepare")).toBe(false);
     expect(can(["auditor"], "members.write")).toBe(false);
   });
 

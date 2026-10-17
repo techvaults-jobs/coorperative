@@ -1,5 +1,5 @@
 import "server-only";
-import { can, type Permission, type Role } from "@techvaults/core";
+import { can, OFFICER_ROLES, type Permission, type Role } from "@techvaults/core";
 import { eq, listUserSocieties, schema, withSociety, type Actor, type SocietyMembership, type Tx } from "@techvaults/db";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -47,10 +47,8 @@ export const requireWorkspace = cache(async (): Promise<Workspace> => {
   return { ...viewer, society, actor: { userId: viewer.user.id, societyId: society.societyId, roles: society.roles } };
 });
 
-const OFFICER_ROLES: readonly Role[] = ["principal_officer", "chairperson", "secretary", "treasurer", "loan_officer", "loan_committee", "payroll_officer", "auditor"];
-
 export function requiresTwoFactor(roles: readonly Role[]): boolean {
-  return roles.some((r) => OFFICER_ROLES.includes(r));
+  return roles.some((r) => (OFFICER_ROLES as readonly Role[]).includes(r));
 }
 
 /** Run a database call scoped to the workspace's society. */

@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
 import { authClient } from "@/lib/auth-client";
 
+const TOO_MANY = "Too many attempts. Wait 10 seconds, then try again.";
+
 type Step = { kind: "idle" } | { kind: "scan"; qr: string; secret: string; backupCodes: string[] } | { kind: "done"; backupCodes: string[] };
 
 export function TwoFactorSetup({ enabled, officer }: { enabled: boolean; officer: boolean }) {
@@ -21,7 +23,7 @@ export function TwoFactorSetup({ enabled, officer }: { enabled: boolean; officer
     const result = await authClient.twoFactor.enable({ password });
     setPending(false);
     if (result.error || !result.data) {
-      setError("That password isn't right.");
+      setError(result.error?.status === 429 ? TOO_MANY : "That password isn't right.");
       return;
     }
     if (result.data.method !== "totp") {
@@ -46,7 +48,7 @@ export function TwoFactorSetup({ enabled, officer }: { enabled: boolean; officer
     const result = await authClient.twoFactor.verifyTotp({ code });
     setPending(false);
     if (result.error) {
-      setError("That code isn't right. Check your phone's clock is set automatically and try the newest code.");
+      setError(result.error.status === 429 ? TOO_MANY : "That code isn't right. Check your phone's clock is set automatically and try the newest code.");
       return;
     }
     setStep({ kind: "done", backupCodes: step.backupCodes });
@@ -60,7 +62,7 @@ export function TwoFactorSetup({ enabled, officer }: { enabled: boolean; officer
     const result = await authClient.twoFactor.disable({ password });
     setPending(false);
     if (result.error) {
-      setError("That password isn't right.");
+      setError(result.error.status === 429 ? TOO_MANY : "That password isn't right.");
       return;
     }
     window.location.reload();

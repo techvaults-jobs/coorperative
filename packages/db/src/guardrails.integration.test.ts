@@ -15,8 +15,29 @@ import { createDb, withSociety, type Database } from "./client.js";
 import * as schema from "./schema.js";
 import { listAuditEvents, verifySocietyAuditChain } from "./services/audit.js";
 import { listUserSocieties } from "./services/societies.js";
-import { listJournal, memberBalances, PermissionError, postJournalEntry, reverseJournalEntry, trialBalance, type Actor } from "./services/ledger.js";
+import {
+  approveSubmission,
+  listJournal,
+  listSubmissions,
+  memberBalances,
+  PermissionError,
+  rejectSubmission,
+  requestReversal,
+  submitJournalEntry,
+  trialBalance,
+  withdrawSubmission,
+  type Actor,
+} from "./services/ledger.js";
 import { createMember, listMembers, updateMember } from "./services/members.js";
+import {
+  acceptInvitation,
+  changeOfficerRoles,
+  findInvitation,
+  inviteOfficer,
+  listOfficers,
+  removeOfficer,
+  revokeInvitation,
+} from "./services/officers.js";
 
 const ADMIN = process.env.TEST_PG_URL;
 
@@ -38,6 +59,25 @@ describe.runIf(ADMIN)("database guardrails", () => {
   const ids = {} as Record<"socA" | "socB" | "treasurer" | "chair" | "auditor" | "bank" | "savings" | "shares" | "income", string>;
 
   const actor = (roles: Role[], userId = ids.treasurer, societyId = ids.socA): Actor => ({ userId, societyId, roles });
+  const treasurer = () => actor(["treasurer"]);
+  const chair = () => actor(["chairperson"], ids.chair);
+  type Draft = Parameters<typeof submitJournalEntry>[2];
+
+  /** Prepare as the treasurer, approve as the chair: the only way anything reaches the journal. */
+  async function post(draft: Draft) {
+    const submission = await withSociety(app.db, ids.socA, (tx) => submitJournalEntry(tx, treasurer(), draft));
+    const entry = await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, chair(), submission.id));
+    return { submission, entry };
+  }
+  const fee = (key: string, naira = "2000"): Draft => ({
+    entryDate: "2026-10-31",
+    description: `Entrance fee – ${key}`,
+    idempotencyKey: key,
+    lines: [
+      { accountId: ids.bank, side: "debit", amount: parseNaira(naira) },
+      { accountId: ids.income, side: "credit", amount: parseNaira(naira) },
+    ],
+  });
 
   beforeAll(async () => {
     const root = postgres(ADMIN!, { max: 1, onnotice: () => {} });
@@ -116,19 +156,18 @@ describe.runIf(ADMIN)("database guardrails", () => {
 
   it("posts a balanced entry and keeps the trial balance in balance", async () => {
     const [member] = await withSociety(app.db, ids.socA, (tx) => listMembers(tx, actor(["secretary"])));
-    const posted = await withSociety(app.db, ids.socA, (tx) =>
-      postJournalEntry(tx, actor(["treasurer"]), {
-        entryDate: "2026-10-31",
-        description: "October payroll remittance – A-001",
-        idempotencyKey: "payroll-2026-10-A-001",
-        lines: [
-          { accountId: ids.bank, side: "debit", amount: parseNaira("15000") },
-          { accountId: ids.savings, side: "credit", amount: parseNaira("10000"), memberId: member!.id },
-          { accountId: ids.shares, side: "credit", amount: parseNaira("5000"), memberId: member!.id },
-        ],
-      }),
-    );
-    expect(posted.created).toBe(true);
+    const { submission, entry } = await post({
+      entryDate: "2026-10-31",
+      description: "October payroll remittance – A-001",
+      idempotencyKey: "payroll-2026-10-A-001",
+      lines: [
+        { accountId: ids.bank, side: "debit", amount: parseNaira("15000") },
+        { accountId: ids.savings, side: "credit", amount: parseNaira("10000"), memberId: member!.id },
+        { accountId: ids.shares, side: "credit", amount: parseNaira("5000"), memberId: member!.id },
+      ],
+    });
+    expect(submission.created).toBe(true);
+    expect(entry.entryNo).toBe(1n);
 
     const tb = await withSociety(app.db, ids.socA, (tx) => trialBalance(tx));
     const debit = tb.reduce((s, r) => s + r.debit, 0n);
@@ -143,29 +182,94 @@ describe.runIf(ADMIN)("database guardrails", () => {
     ]);
   });
 
-  it("does not post twice for the same idempotency key", async () => {
-    const draft = {
-      entryDate: "2026-10-31",
-      description: "Entrance fee – A-001",
-      idempotencyKey: "fee-A-001",
-      lines: [
-        { accountId: ids.bank, side: "debit" as const, amount: parseNaira("2000") },
-        { accountId: ids.income, side: "credit" as const, amount: parseNaira("2000") },
-      ],
-    };
-    const first = await withSociety(app.db, ids.socA, (tx) => postJournalEntry(tx, actor(["treasurer"]), draft));
-    const retry = await withSociety(app.db, ids.socA, (tx) => postJournalEntry(tx, actor(["treasurer"]), draft));
+  it("does not submit twice for the same idempotency key, and approval posts once", async () => {
+    const draft = fee("fee-A-001");
+    const first = await withSociety(app.db, ids.socA, (tx) => submitJournalEntry(tx, treasurer(), draft));
+    const retry = await withSociety(app.db, ids.socA, (tx) => submitJournalEntry(tx, treasurer(), draft));
     expect(retry).toEqual({ ...first, created: false });
-    const [{ n }] = (await admin`select count(*)::int as n from journal_lines where entry_id = ${first.id}`) as unknown as [{ n: number }];
+    const entry = await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, chair(), first.id));
+    await expect(withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, chair(), first.id))).rejects.toThrow(/already approved/);
+    const [{ n }] = (await admin`select count(*)::int as n from journal_lines where entry_id = ${entry.id}`) as unknown as [{ n: number }];
     expect(n).toBe(2);
   });
 
+  it("never lets the preparer approve their own entry, whatever their roles", async () => {
+    const both = actor(["treasurer", "chairperson"]);
+    const s = await withSociety(app.db, ids.socA, (tx) => submitJournalEntry(tx, both, fee("self-approve")));
+    await expect(withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, both, s.id))).rejects.toThrow(/cannot also approve/);
+    await expect(withSociety(app.db, ids.socA, (tx) => rejectSubmission(tx, both, s.id, "no"))).rejects.toThrow(/cannot also approve/);
+    // An approver role is still needed.
+    await expect(withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, actor(["auditor"], ids.auditor), s.id))).rejects.toBeInstanceOf(PermissionError);
+    await withSociety(app.db, ids.socA, (tx) => withdrawSubmission(tx, both, s.id));
+  });
+
+  it("enforces maker-checker in the database even when the application is bypassed", async () => {
+    // No submission at all.
+    await rejectsWith(
+      withSociety(app.db, ids.socA, (tx) =>
+        tx.insert(schema.journalEntries).values({ societyId: ids.socA, entryDate: "2026-10-31", description: "raw", idempotencyKey: "raw-1", preparedBy: ids.treasurer, postedBy: ids.chair }),
+      ),
+      /only by approving a submission/,
+    );
+    // A submission marked approved by its own preparer.
+    const s = await withSociety(app.db, ids.socA, (tx) => submitJournalEntry(tx, treasurer(), fee("raw-self")));
+    await rejectsWith(
+      withSociety(app.db, ids.socA, (tx) =>
+        tx.update(schema.journalSubmissions).set({ status: "approved", decidedBy: ids.treasurer, decidedAt: new Date() }).where(sql`id = ${s.id}`),
+      ),
+      /separation_of_duties/,
+    );
+    // Approved, but the entry never posted: refused at commit.
+    await rejectsWith(
+      withSociety(app.db, ids.socA, (tx) =>
+        tx.update(schema.journalSubmissions).set({ status: "approved", decidedBy: ids.chair, decidedAt: new Date() }).where(sql`id = ${s.id}`),
+      ),
+      /approved without posting/,
+    );
+    // A submission's content can't be edited, even by the owner.
+    await expect(admin`update journal_submissions set description = 'edited' where id = ${s.id}`).rejects.toThrow(/cannot be edited/);
+    await expect(admin`delete from journal_submissions where id = ${s.id}`).rejects.toThrow(/kept for the audit trail/);
+  });
+
+  it("numbers entries per society with no gaps, whatever is rejected or retried", async () => {
+    const before = await withSociety(app.db, ids.socA, (tx) => listJournal(tx, treasurer()));
+    const rejected = await withSociety(app.db, ids.socA, (tx) => submitJournalEntry(tx, treasurer(), fee("gap-rejected")));
+    await withSociety(app.db, ids.socA, (tx) => rejectSubmission(tx, chair(), rejected.id, "Wrong amount"));
+    await withSociety(app.db, ids.socA, (tx) => submitJournalEntry(tx, treasurer(), fee("gap-rejected"))); // retry of a decided key
+    const { entry } = await post(fee("gap-next"));
+    expect(entry.entryNo).toBe(before[0]!.entryNo + 1n);
+
+    const all = (await admin`select society_id, entry_no from journal_entries order by society_id, entry_no`) as unknown as { society_id: string; entry_no: string }[];
+    const numbers = all.filter((r) => r.society_id === ids.socA).map((r) => Number(r.entry_no));
+    expect(numbers).toEqual(numbers.map((_, i) => i + 1));
+
+    const history = await withSociety(app.db, ids.socA, (tx) => listSubmissions(tx, chair()));
+    const decided = history.find((h) => h.id === rejected.id)!;
+    expect(decided).toMatchObject({ status: "rejected", decisionReason: "Wrong amount", decidedByName: "Chair", entryNo: null });
+  });
+
+  it("refuses at submission a line on the wrong kind of account", async () => {
+    await expect(
+      withSociety(app.db, ids.socA, (tx) =>
+        submitJournalEntry(tx, treasurer(), {
+          ...fee("wrong-kind"),
+          lines: [
+            { accountId: ids.bank, side: "debit", amount: parseNaira("1") },
+            { accountId: ids.savings, side: "credit", amount: parseNaira("1") },
+          ],
+        }),
+      ),
+    ).rejects.toThrow(/must name a member/);
+  });
+
   it("rejects an unbalanced entry at commit even when the application is bypassed", async () => {
+    const s = await withSociety(app.db, ids.socA, (tx) => submitJournalEntry(tx, treasurer(), fee("raw-bad")));
     await expect(
       withSociety(app.db, ids.socA, async (tx) => {
+        await tx.update(schema.journalSubmissions).set({ status: "approved", decidedBy: ids.chair, decidedAt: new Date() }).where(sql`id = ${s.id}`);
         const [e] = await tx
           .insert(schema.journalEntries)
-          .values({ societyId: ids.socA, entryDate: "2026-10-31", description: "bad", idempotencyKey: "raw-bad", preparedBy: ids.treasurer, postedBy: ids.treasurer })
+          .values({ societyId: ids.socA, entryDate: "2026-10-31", description: "Entrance fee – raw-bad", idempotencyKey: "raw-bad", submissionId: s.id, preparedBy: ids.treasurer, postedBy: ids.chair })
           .returning();
         await tx.insert(schema.journalLines).values([
           { societyId: ids.socA, entryId: e!.id, accountId: ids.bank, side: "debit", amount: 100n },
@@ -175,19 +279,20 @@ describe.runIf(ADMIN)("database guardrails", () => {
     ).rejects.toThrow(/does not balance/);
   });
 
-  it("refuses a member control line without a member", async () => {
+  it("refuses a member control line without a member even when the application is bypassed", async () => {
+    const s = await withSociety(app.db, ids.socA, (tx) => submitJournalEntry(tx, treasurer(), fee("raw-no-member")));
     await rejectsWith(
-      withSociety(app.db, ids.socA, (tx) =>
-        postJournalEntry(tx, actor(["treasurer"]), {
-          entryDate: "2026-10-31",
-          description: "Savings with no member",
-          idempotencyKey: "no-member",
-          lines: [
-            { accountId: ids.bank, side: "debit", amount: 100n as never },
-            { accountId: ids.savings, side: "credit", amount: 100n as never },
-          ],
-        }),
-      ),
+      withSociety(app.db, ids.socA, async (tx) => {
+        await tx.update(schema.journalSubmissions).set({ status: "approved", decidedBy: ids.chair, decidedAt: new Date() }).where(sql`id = ${s.id}`);
+        const [e] = await tx
+          .insert(schema.journalEntries)
+          .values({ societyId: ids.socA, entryDate: "2026-10-31", description: "Entrance fee – raw-no-member", idempotencyKey: "raw-no-member", submissionId: s.id, preparedBy: ids.treasurer, postedBy: ids.chair })
+          .returning();
+        await tx.insert(schema.journalLines).values([
+          { societyId: ids.socA, entryId: e!.id, accountId: ids.bank, side: "debit", amount: 100n },
+          { societyId: ids.socA, entryId: e!.id, accountId: ids.savings, side: "credit", amount: 100n },
+        ]);
+      }),
       /must name a member/,
     );
   });
@@ -202,33 +307,30 @@ describe.runIf(ADMIN)("database guardrails", () => {
     await expect(admin`update audit_events set action = 'x'`).rejects.toThrow(/append-only/);
   });
 
-  it("reverses an entry once, netting every account to zero", async () => {
-    const [entry] = (await admin`select id from journal_entries where idempotency_key = 'fee-A-001'`) as unknown as [{ id: string }];
-    await withSociety(app.db, ids.socA, (tx) =>
-      reverseJournalEntry(tx, actor(["treasurer"]), entry.id, { entryDate: "2026-11-01", reason: "Fee waived by committee", idempotencyKey: "rev-fee-A-001" }),
-    );
-    const tb = await withSociety(app.db, ids.socA, (tx) => trialBalance(tx));
-    expect(tb.find((r) => r.code === "4100")!.balance).toBe(0n);
-    await expect(
-      withSociety(app.db, ids.socA, (tx) =>
-        reverseJournalEntry(tx, actor(["treasurer"]), entry.id, { entryDate: "2026-11-01", reason: "again", idempotencyKey: "rev-fee-A-001-b" }),
-      ),
-    ).rejects.toThrow();
+  it("reverses an entry once, after approval, netting every account to zero", async () => {
+    const [entry] = (await admin`select id, entry_no from journal_entries where idempotency_key = 'fee-A-001'`) as unknown as [{ id: string; entry_no: string }];
+    const request = (key: string) =>
+      withSociety(app.db, ids.socA, (tx) => requestReversal(tx, treasurer(), entry.id, { entryDate: "2026-11-01", reason: "Fee waived by committee", idempotencyKey: key }));
+    const first = await request("rev-fee-A-001");
+    await expect(request("rev-fee-A-001-b")).rejects.toThrow(/already waiting for approval/);
+    let tb = await withSociety(app.db, ids.socA, (tx) => trialBalance(tx));
+    expect(tb.find((r) => r.code === "4100")!.balance).not.toBe(0n); // nothing posted yet
+
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, chair(), first.id));
+    tb = await withSociety(app.db, ids.socA, (tx) => trialBalance(tx));
+    const fees = (await admin`select count(*)::int as n from journal_entries where description like 'Entrance fee%'`) as unknown as [{ n: number }];
+    expect(tb.find((r) => r.code === "4100")!.balance).toBe(parseNaira("2000") * BigInt(fees[0].n - 1));
+    const [reversal] = (await admin`select description from journal_entries where reverses_entry_id = ${entry.id}`) as unknown as [{ description: string }];
+    expect(reversal.description).toBe(`Reversal of #${entry.entry_no}: Fee waived by committee`);
+    await expect(request("rev-fee-A-001-c")).rejects.toThrow(/already been reversed/);
   });
 
   it("enforces role permissions in services", async () => {
     await expect(
-      withSociety(app.db, ids.socA, (tx) =>
-        postJournalEntry(tx, actor(["auditor"], ids.auditor), {
-          entryDate: "2026-10-31",
-          description: "Auditor attempt",
-          idempotencyKey: "auditor",
-          lines: [
-            { accountId: ids.bank, side: "debit", amount: parseNaira("1") },
-            { accountId: ids.income, side: "credit", amount: parseNaira("1") },
-          ],
-        }),
-      ),
+      withSociety(app.db, ids.socA, (tx) => submitJournalEntry(tx, actor(["auditor"], ids.auditor), fee("auditor", "1"))),
+    ).rejects.toBeInstanceOf(PermissionError);
+    await expect(
+      withSociety(app.db, ids.socA, (tx) => submitJournalEntry(tx, actor(["chairperson"], ids.chair), fee("chair-prepares", "1"))),
     ).rejects.toBeInstanceOf(PermissionError);
   });
 
@@ -248,9 +350,11 @@ describe.runIf(ADMIN)("database guardrails", () => {
 
   it("lists journal entries with lines, newest first, and marks reversals", async () => {
     const journal = await withSociety(app.db, ids.socA, (tx) => listJournal(tx, actor(["treasurer"])));
+    expect(journal[0]!.preparedByName).toBe("Treasurer");
+    expect(journal[0]!.postedByName).toBe("Chair");
     expect(journal.length).toBeGreaterThanOrEqual(3);
     expect(journal[0]!.entryNo > journal[1]!.entryNo).toBe(true);
-    const fee = journal.find((e) => e.description === "Entrance fee – A-001")!;
+    const fee = journal.find((e) => e.description === "Entrance fee – fee-A-001")!;
     expect(fee.reversedByEntryId).not.toBeNull();
     expect(fee.lines.map((l) => [l.accountCode, l.side])).toEqual([
       ["1100", "debit"],
@@ -273,5 +377,65 @@ describe.runIf(ADMIN)("database guardrails", () => {
 
   it("does not let the app make anyone platform staff", async () => {
     await rejectsWith(app.db.update(schema.users).set({ isPlatformStaff: true }), /permission denied/);
+  });
+
+  it("invites an officer by link, once, for the invited email only", async () => {
+    const secretary = actor(["secretary"], ids.treasurer);
+    await expect(withSociety(app.db, ids.socA, (tx) => inviteOfficer(tx, treasurer(), { email: "x@example.ng", roles: ["auditor"] }))).rejects.toBeInstanceOf(
+      PermissionError,
+    );
+    await expect(withSociety(app.db, ids.socA, (tx) => inviteOfficer(tx, secretary, { email: "x@example.ng", roles: ["member"] }))).rejects.toThrow(/Unknown role/);
+
+    const old = await withSociety(app.db, ids.socA, (tx) => inviteOfficer(tx, secretary, { email: " New.Officer@Example.ng ", roles: ["auditor"] }));
+    const invite = await withSociety(app.db, ids.socA, (tx) => inviteOfficer(tx, secretary, { email: "new.officer@example.ng", roles: ["auditor", "loan_officer"] }));
+    expect(await findInvitation(app.db, old.token)).toEqual({ status: "revoked" }); // replaced by the newer link
+    const found = await findInvitation(app.db, invite.token);
+    expect(found).toMatchObject({ status: "valid", email: "new.officer@example.ng", roles: ["loan_officer", "auditor"], societyName: "Unilag Staff Cooperative (test)" });
+    expect(await findInvitation(app.db, "x".repeat(43))).toEqual({ status: "not_found" });
+    // The token itself is never stored.
+    expect(JSON.stringify(await admin`select * from officer_invitations`)).not.toContain(invite.token);
+    expect(JSON.stringify(await admin`select * from audit_events`)).not.toContain(invite.token);
+
+    if (found.status !== "valid") throw new Error("unreachable");
+    const [newUser] = await adminDb.insert(schema.users).values({ email: "new.officer@example.ng", name: "New Officer" }).returning();
+    await expect(withSociety(app.db, ids.socA, (tx) => acceptInvitation(tx, found.id, { id: ids.auditor, email: "auditor@test" }))).rejects.toThrow(
+      /for new\.officer@example\.ng/,
+    );
+    await withSociety(app.db, ids.socA, (tx) => acceptInvitation(tx, found.id, { id: newUser!.id, email: "New.Officer@example.ng" }));
+    expect(await findInvitation(app.db, invite.token)).toEqual({ status: "used" });
+    expect((await listUserSocieties(app.db, newUser!.id)).map((s) => s.roles)).toEqual([["loan_officer", "auditor"]]);
+    await expect(withSociety(app.db, ids.socA, (tx) => inviteOfficer(tx, secretary, { email: "new.officer@example.ng", roles: ["auditor"] }))).rejects.toThrow(
+      /already an officer/,
+    );
+  });
+
+  it("expires and revokes invitations", async () => {
+    const secretary = actor(["secretary"], ids.treasurer);
+    const past = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    const stale = await withSociety(app.db, ids.socA, (tx) => inviteOfficer(tx, secretary, { email: "late@example.ng", roles: ["auditor"] }, past));
+    expect(await findInvitation(app.db, stale.token)).toEqual({ status: "expired" });
+    const fresh = await withSociety(app.db, ids.socA, (tx) => inviteOfficer(tx, secretary, { email: "late@example.ng", roles: ["auditor"] }));
+    await withSociety(app.db, ids.socA, (tx) => revokeInvitation(tx, secretary, fresh.invitationId));
+    expect(await findInvitation(app.db, fresh.token)).toEqual({ status: "revoked" });
+    await expect(withSociety(app.db, ids.socA, (tx) => revokeInvitation(tx, secretary, fresh.invitationId))).rejects.toThrow(/already used or withdrawn/);
+  });
+
+  it("changes and removes officers, but never the manager's own access", async () => {
+    const secretary = actor(["secretary"], ids.treasurer);
+    const officers = await withSociety(app.db, ids.socA, (tx) => listOfficers(tx, secretary));
+    const newcomer = officers.find((o) => o.email === "new.officer@example.ng")!;
+    await withSociety(app.db, ids.socA, (tx) => changeOfficerRoles(tx, secretary, newcomer.userId, ["auditor"], "Moved to audit only"));
+    expect((await listUserSocieties(app.db, newcomer.userId))[0]!.roles).toEqual(["auditor"]);
+    await expect(withSociety(app.db, ids.socA, (tx) => changeOfficerRoles(tx, secretary, ids.treasurer, ["chairperson"], "promote me"))).rejects.toThrow(
+      /your own roles/,
+    );
+    await expect(withSociety(app.db, ids.socA, (tx) => removeOfficer(tx, secretary, ids.treasurer, "leaving"))).rejects.toThrow(/remove yourself/);
+    // Another society's officers are out of reach.
+    await expect(withSociety(app.db, ids.socA, (tx) => removeOfficer(tx, secretary, ids.chair, "not ours"))).rejects.toThrow(/not an officer/);
+    await withSociety(app.db, ids.socA, (tx) => removeOfficer(tx, secretary, newcomer.userId, "Left the society"));
+    expect(await listUserSocieties(app.db, newcomer.userId)).toEqual([]);
+    const events = await withSociety(app.db, ids.socA, (tx) => listAuditEvents(tx, ids.socA));
+    expect(events.slice(0, 2).map((e) => e.action)).toEqual(["officer.removed", "officer.roles_changed"]);
+    expect(await withSociety(app.db, ids.socA, (tx) => verifySocietyAuditChain(tx, ids.socA))).toMatchObject({ ok: false }); // tampered earlier in this suite
   });
 });

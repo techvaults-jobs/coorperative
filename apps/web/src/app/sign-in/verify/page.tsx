@@ -20,6 +20,7 @@ export default function VerifyPage() {
       : await authClient.twoFactor.verifyTotp({ code, trustDevice: false });
     if (result.error) {
       setPending(false);
+      if (result.error.status === 429) return setError("Too many attempts. Wait 10 seconds, then try again.");
       setError(useBackup ? "That backup code isn't valid or was already used." : "That code isn't right. Codes change every 30 seconds.");
       return;
     }

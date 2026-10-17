@@ -28,6 +28,7 @@ export const liabilityType = pgEnum("liability_type", ["limited", "unlimited"]);
 export const memberStatus = pgEnum("member_status", ["applicant", "active", "suspended", "exiting", "exited", "deceased"]);
 export const accountClass = pgEnum("account_class", ["asset", "liability", "equity", "income", "expense"]);
 export const entrySide = pgEnum("entry_side", ["debit", "credit"]);
+export const submissionStatus = pgEnum("submission_status", ["pending", "approved", "rejected", "withdrawn"]);
 
 export const societies = pgTable("societies", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -180,13 +181,17 @@ export const journalEntries = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     societyId: uuid("society_id").notNull().references(() => societies.id),
-    entryNo: bigserial("entry_no", { mode: "bigint" }).notNull(),
+    /** Numbered 1, 2, 3… per society with no gaps, by a trigger at insert (migrations/0005). */
+    entryNo: bigint("entry_no", { mode: "bigint" }).notNull().default(sql`0`),
     entryDate: date("entry_date").notNull(),
     description: text("description").notNull(),
     idempotencyKey: text("idempotency_key").notNull(),
     reversesEntryId: uuid("reverses_entry_id"),
     policyVersionId: uuid("policy_version_id"),
+    /** The approved submission this entry came from. Entries posted before maker-checker have none. */
+    submissionId: uuid("submission_id"),
     preparedBy: uuid("prepared_by").notNull().references(() => users.id),
+    /** The approver. Since maker-checker, always someone other than the preparer. */
     postedBy: uuid("posted_by").notNull().references(() => users.id),
     postedAt: timestamp("posted_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -195,8 +200,51 @@ export const journalEntries = pgTable(
     unique("journal_entries_society_id_id").on(t.societyId, t.id),
     // An entry can be reversed at most once.
     uniqueIndex("journal_entries_reverses_once").on(t.reversesEntryId),
+    uniqueIndex("journal_entries_society_entry_no").on(t.societyId, t.entryNo),
+    uniqueIndex("journal_entries_submission").on(t.submissionId),
     foreignKey({ columns: [t.societyId, t.reversesEntryId], foreignColumns: [t.societyId, t.id] }),
     index("journal_entries_society_date").on(t.societyId, t.entryDate),
+  ],
+);
+
+/** Line of a submission awaiting approval; amounts are kobo as decimal strings (JSON has no bigint). */
+export interface SubmissionLine {
+  accountId: string;
+  side: "debit" | "credit";
+  amount: string;
+  memberId?: string;
+  memo?: string;
+}
+
+/**
+ * Journal entries waiting for a second officer. Only the decision columns can change, and
+ * only once (see migrations/0005); approval posts the entry to journal_entries.
+ */
+export const journalSubmissions = pgTable(
+  "journal_submissions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    societyId: uuid("society_id").notNull().references(() => societies.id),
+    entryDate: date("entry_date").notNull(),
+    description: text("description").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    lines: jsonb("lines").$type<SubmissionLine[]>().notNull(),
+    reversesEntryId: uuid("reverses_entry_id"),
+    status: submissionStatus("status").notNull().default("pending"),
+    preparedBy: uuid("prepared_by").notNull().references(() => users.id),
+    preparedAt: timestamp("prepared_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedBy: uuid("decided_by").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decisionReason: text("decision_reason"),
+  },
+  (t) => [
+    uniqueIndex("journal_submissions_society_idempotency").on(t.societyId, t.idempotencyKey),
+    unique("journal_submissions_society_id_id").on(t.societyId, t.id),
+    foreignKey({ columns: [t.societyId, t.reversesEntryId], foreignColumns: [journalEntries.societyId, journalEntries.id] }),
+    // At most one reversal of an entry can be waiting at a time.
+    uniqueIndex("journal_submissions_pending_reversal").on(t.reversesEntryId).where(sql`status = 'pending'`),
+    index("journal_submissions_society_status").on(t.societyId, t.status),
+    check("journal_submissions_decision", sql`(${t.status} = 'pending') = (${t.decidedBy} is null)`),
   ],
 );
 
@@ -240,4 +288,30 @@ export const auditEvents = pgTable(
     hash: text("hash").notNull(),
   },
   (t) => [primaryKey({ columns: [t.societyId, t.sequence] })],
+);
+
+/**
+ * Invitations for officers to join a society. Only a SHA-256 hash of the link token is
+ * stored, so the database alone cannot be used to accept an invitation.
+ */
+export const officerInvitations = pgTable(
+  "officer_invitations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    societyId: uuid("society_id").notNull().references(() => societies.id),
+    email: text("email").notNull(),
+    roles: text("roles").array().notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    invitedBy: uuid("invited_by").notNull().references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    acceptedBy: uuid("accepted_by").references(() => users.id),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedBy: uuid("revoked_by").references(() => users.id),
+  },
+  (t) => [
+    index("officer_invitations_society").on(t.societyId),
+    check("officer_invitations_has_roles", sql`cardinality(${t.roles}) > 0`),
+  ],
 );

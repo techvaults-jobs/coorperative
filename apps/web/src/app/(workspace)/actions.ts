@@ -1,13 +1,28 @@
 "use server";
 
 import { parseNaira, LedgerError, type JournalLine } from "@techvaults/core";
-import { createMember, PermissionError, postJournalEntry, reverseJournalEntry, listAccounts } from "@techvaults/db";
+import {
+  approveSubmission,
+  changeOfficerRoles,
+  createMember,
+  inviteOfficer,
+  listAccounts,
+  OfficerError,
+  PermissionError,
+  rejectSubmission,
+  removeOfficer,
+  requestReversal,
+  revokeInvitation,
+  submitJournalEntry,
+  withdrawSubmission,
+} from "@techvaults/db";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { inSociety, requireViewer, requireWorkspace, SOCIETY_COOKIE } from "@/lib/session";
 
 export type FormState = { ok: boolean; message?: string; fieldErrors?: Record<string, string> };
+export type InviteState = FormState & { link?: string; email?: string };
 
 export async function switchSociety(formData: FormData) {
   const viewer = await requireViewer();
@@ -23,7 +38,7 @@ function text(formData: FormData, key: string): string {
 }
 
 function describe(error: unknown): string {
-  if (error instanceof PermissionError || error instanceof LedgerError) return error.message;
+  if (error instanceof PermissionError || error instanceof LedgerError || error instanceof OfficerError) return error.message;
   const cause = (error as { cause?: { code?: string; message?: string } })?.cause;
   if (cause?.code === "23505") return "That record already exists. Member numbers and staff IDs must be unique within the society.";
   if (cause?.code === "23514" || cause?.code === "23001") return cause.message ?? "The database rejected this change.";
@@ -59,7 +74,7 @@ export async function addMember(_prev: FormState, formData: FormData): Promise<F
   return { ok: true, message: `${input.fullName} was added as member ${input.memberNo}.` };
 }
 
-export async function postEntry(_prev: FormState, formData: FormData): Promise<FormState> {
+export async function submitEntry(_prev: FormState, formData: FormData): Promise<FormState> {
   const ws = await requireWorkspace();
   const entryDate = text(formData, "entryDate");
   const description = text(formData, "description");
@@ -98,7 +113,7 @@ export async function postEntry(_prev: FormState, formData: FormData): Promise<F
         amount: amount!,
         ...(control ? { memberId } : {}),
       });
-      return postJournalEntry(tx, ws.actor, {
+      return submitJournalEntry(tx, ws.actor, {
         entryDate,
         description,
         idempotencyKey,
@@ -106,7 +121,13 @@ export async function postEntry(_prev: FormState, formData: FormData): Promise<F
       });
     });
     revalidatePath("/ledger");
-    return { ok: true, message: result.created ? `Posted as entry #${result.entryNo}.` : `Already posted as entry #${result.entryNo}; nothing was duplicated.` };
+    revalidatePath("/approvals");
+    return {
+      ok: true,
+      message: result.created
+        ? "Submitted for approval. It will be posted when another officer approves it."
+        : "Already submitted; nothing was duplicated.",
+    };
   } catch (e) {
     return { ok: false, message: describe(e) };
   }
@@ -117,16 +138,90 @@ export async function reverseEntry(_prev: FormState, formData: FormData): Promis
   const entryId = text(formData, "entryId");
   const reason = text(formData, "reason");
   if (reason.length < 5) return { ok: false, fieldErrors: { reason: "Explain why this entry is being reversed." } };
-  let entryNo: bigint;
   try {
     const today = new Date().toISOString().slice(0, 10);
-    ({ entryNo } = await inSociety(ws, (tx) =>
-      reverseJournalEntry(tx, ws.actor, entryId, { entryDate: today, reason, idempotencyKey: `reverse:${entryId}` }),
-    ));
+    await inSociety(ws, (tx) => requestReversal(tx, ws.actor, entryId, { entryDate: today, reason, idempotencyKey: text(formData, "idempotencyKey") }));
   } catch (e) {
     return { ok: false, message: describe(e) };
   }
-  // The reversed entry's form disappears, so report the outcome at page level.
+  // The entry's reverse form disappears while the reversal waits, so report the outcome at page level.
   revalidatePath("/ledger");
-  redirect(`/ledger?reversal=${entryNo}`);
+  revalidatePath("/approvals");
+  redirect("/ledger?reversal=requested");
+}
+
+/** Approve, reject or withdraw a submission, then show the outcome at the top of the approvals page. */
+export async function decideSubmission(_prev: FormState, formData: FormData): Promise<FormState> {
+  const ws = await requireWorkspace();
+  const id = text(formData, "submissionId");
+  const decision = text(formData, "decision");
+  const reason = text(formData, "reason");
+  let outcome: string;
+  try {
+    if (decision === "approve") {
+      const { entryNo } = await inSociety(ws, (tx) => approveSubmission(tx, ws.actor, id));
+      outcome = `posted-${entryNo}`;
+    } else if (decision === "reject") {
+      if (reason.length < 5) return { ok: false, fieldErrors: { reason: "Tell the preparer what needs to change." } };
+      await inSociety(ws, (tx) => rejectSubmission(tx, ws.actor, id, reason));
+      outcome = "rejected";
+    } else if (decision === "withdraw") {
+      await inSociety(ws, (tx) => withdrawSubmission(tx, ws.actor, id));
+      outcome = "withdrawn";
+    } else {
+      return { ok: false, message: "Unknown decision." };
+    }
+  } catch (e) {
+    return { ok: false, message: describe(e) };
+  }
+  revalidatePath("/ledger");
+  revalidatePath("/approvals");
+  redirect(`/approvals?done=${outcome}`);
+}
+
+export async function inviteOfficerAction(_prev: InviteState, formData: FormData): Promise<InviteState> {
+  const ws = await requireWorkspace();
+  const email = text(formData, "email");
+  const roles = formData.getAll("roles").map(String);
+  const fieldErrors: Record<string, string> = {};
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fieldErrors.email = "Enter the officer's email address.";
+  if (roles.length === 0) fieldErrors.roles = "Choose at least one role.";
+  if (Object.keys(fieldErrors).length) return { ok: false, fieldErrors };
+  try {
+    const { token } = await inSociety(ws, (tx) => inviteOfficer(tx, ws.actor, { email, roles }));
+    const base = (process.env.BETTER_AUTH_URL ?? "http://localhost:3000").replace(/\/$/, "");
+    revalidatePath("/officers");
+    return { ok: true, email: email.toLowerCase(), link: `${base}/invite/${token}` };
+  } catch (e) {
+    return { ok: false, message: describe(e) };
+  }
+}
+
+export async function revokeInvitationAction(formData: FormData) {
+  const ws = await requireWorkspace();
+  try {
+    await inSociety(ws, (tx) => revokeInvitation(tx, ws.actor, text(formData, "invitationId")));
+  } catch (e) {
+    redirect(`/officers?error=${encodeURIComponent(describe(e))}`);
+  }
+  revalidatePath("/officers");
+}
+
+export async function updateOfficerAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const ws = await requireWorkspace();
+  const userId = text(formData, "userId");
+  const reason = text(formData, "reason");
+  const remove = text(formData, "intent") === "remove";
+  if (reason.length < 5) return { ok: false, fieldErrors: { reason: "Give a reason; it goes in the audit trail." } };
+  try {
+    await inSociety(ws, (tx) =>
+      remove ? removeOfficer(tx, ws.actor, userId, reason) : changeOfficerRoles(tx, ws.actor, userId, formData.getAll("roles").map(String), reason),
+    );
+  } catch (e) {
+    return { ok: false, message: describe(e) };
+  }
+  revalidatePath("/officers");
+  // A removed officer's row (and this form) disappears, so report removal at page level.
+  if (remove) redirect("/officers?notice=removed");
+  return { ok: true, message: "Roles updated." };
 }

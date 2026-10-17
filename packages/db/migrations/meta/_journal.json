@@ -29,6 +29,20 @@
       "when": 1792199121093,
       "tag": "0003_auth_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792208567325,
+      "tag": "0004_approvals_and_invitations",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792208576432,
+      "tag": "0005_approval_guardrails",
+      "breakpoints": true
     }
   ]
 }

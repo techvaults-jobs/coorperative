@@ -1,40 +1,37 @@
 "use client";
 
-import { BookOpen, LayoutDashboard, Scale, ShieldCheck, Users, KeyRound } from "lucide-react";
+import type { Permission } from "@techvaults/core";
+import { BookOpen, ClipboardCheck, KeyRound, LayoutDashboard, Scale, ShieldCheck, UserCog, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { SignOutButton } from "@/components/sign-out-button";
 import { cn } from "@/components/ui/cn";
+import { roleLabel } from "@/lib/roles";
 import { switchSociety } from "./actions";
 
-const NAV = [
+/** Each link shows only to people whose role can use the page (any one of the listed permissions). */
+const NAV: { href: string; label: string; icon: typeof Users; anyOf?: Permission[] }[] = [
   { href: "/overview", label: "Overview", icon: LayoutDashboard },
-  { href: "/members", label: "Members", icon: Users },
-  { href: "/ledger", label: "Journal", icon: BookOpen },
-  { href: "/trial-balance", label: "Trial balance", icon: Scale },
-  { href: "/audit", label: "Audit trail", icon: ShieldCheck },
+  { href: "/members", label: "Members", icon: Users, anyOf: ["members.read"] },
+  { href: "/ledger", label: "Journal", icon: BookOpen, anyOf: ["ledger.read"] },
+  { href: "/approvals", label: "Approvals", icon: ClipboardCheck, anyOf: ["ledger.approve", "ledger.prepare"] },
+  { href: "/trial-balance", label: "Trial balance", icon: Scale, anyOf: ["ledger.read"] },
+  { href: "/audit", label: "Audit trail", icon: ShieldCheck, anyOf: ["audit.read"] },
+  { href: "/officers", label: "Officers", icon: UserCog, anyOf: ["officers.manage"] },
 ];
-
-const ROLE_LABELS: Record<string, string> = {
-  principal_officer: "Principal officer",
-  chairperson: "Chairperson",
-  secretary: "Secretary",
-  treasurer: "Treasurer",
-  loan_officer: "Loan officer",
-  loan_committee: "Loan committee",
-  payroll_officer: "Payroll officer",
-  auditor: "Auditor",
-  member: "Member",
-};
 
 export function Sidebar({
   user,
   current,
   societies,
+  permissions,
+  pendingApprovals,
 }: {
   user: { name: string; email: string };
   current: { id: string; name: string; roles: string[] };
   societies: { id: string; name: string }[];
+  permissions: Permission[];
+  pendingApprovals: number;
 }) {
   const pathname = usePathname();
   return (
@@ -63,10 +60,10 @@ export function Sidebar({
         ) : (
           <p className="text-sm leading-snug font-semibold">{current.name}</p>
         )}
-        <p className="text-muted text-xs">{current.roles.map((r) => ROLE_LABELS[r] ?? r).join(" · ")}</p>
+        <p className="text-muted text-xs">{current.roles.map(roleLabel).join(" · ")}</p>
       </div>
       <nav aria-label="Main" className="-mx-1 flex gap-1 overflow-x-auto md:flex-col">
-        {NAV.map(({ href, label, icon: Icon }) => {
+        {NAV.filter((item) => !item.anyOf || item.anyOf.some((p) => permissions.includes(p))).map(({ href, label, icon: Icon }) => {
           const active = pathname === href || pathname.startsWith(`${href}/`);
           return (
             <Link
@@ -80,6 +77,12 @@ export function Sidebar({
             >
               <Icon className="size-4" aria-hidden />
               {label}
+              {href === "/approvals" && pendingApprovals > 0 && (
+                <span className="bg-warning-soft text-warning ml-auto rounded-full px-1.5 text-xs font-semibold tabular-nums">
+                  {pendingApprovals}
+                  <span className="sr-only"> waiting</span>
+                </span>
+              )}
             </Link>
           );
         })}

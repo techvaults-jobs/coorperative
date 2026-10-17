@@ -3,7 +3,7 @@
 import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/field";
-import { postEntry, type FormState } from "../actions";
+import { submitEntry, type FormState } from "../actions";
 
 type Option = { id: string; label: string };
 
@@ -18,14 +18,14 @@ export function PostEntryForm({
   accounts: (Option & { memberControl: boolean })[];
   members: Option[];
 }) {
-  const [state, action, pending] = useActionState<FormState, FormData>(postEntry, { ok: false });
+  const [state, action, pending] = useActionState<FormState, FormData>(submitEntry, { ok: false });
   const [debit, setDebit] = useState("");
   const [credit, setCredit] = useState("");
   const needsMember = accounts.some((a) => (a.id === debit || a.id === credit) && a.memberControl);
   const err = state.fieldErrors ?? {};
 
-  // After a successful post the page re-renders with a fresh idempotency key, so the
-  // same submission can't be posted twice by a double click or a retry.
+  // After a successful submission the page re-renders with a fresh idempotency key, so the
+  // same entry can't be submitted twice by a double click or a retry.
   return (
     <form action={action} className="flex flex-col gap-3" noValidate>
       <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
@@ -76,7 +76,7 @@ export function PostEntryForm({
         </p>
       )}
       <Button type="submit" disabled={pending}>
-        {pending ? "Posting…" : "Post entry"}
+        {pending ? "Submitting…" : "Submit for approval"}
       </Button>
     </form>
   );

@@ -5,14 +5,17 @@
  *   DATABASE_ADMIN_URL=...  SEED_ADMIN_EMAIL=...  SEED_ADMIN_PASSWORD=...  pnpm --filter @techvaults/web seed
  *
  * Runs as the database owner because onboarding a society happens before anyone in it can act.
- * Every financial record still goes through the normal services, so the audit chain is complete.
+ * Every financial record still goes through the normal services, so the audit chain is complete:
+ * the admin prepares each entry and a demo chairperson approves it. The chairperson has no
+ * password and cannot sign in; invite a real approver from the Officers page.
  */
 import { parseNaira, type Role } from "@techvaults/core";
-import { createDb, createMember, postJournalEntry, schema, sql, withSociety, type Actor } from "@techvaults/db";
+import { approveSubmission, createDb, createMember, schema, sql, submitJournalEntry, withSociety, type Actor, type Tx } from "@techvaults/db";
 import { hashPassword } from "better-auth/crypto";
 
 const DEMO_SLUG = "demo-staff-cooperative";
 const ADMIN_ROLES: Role[] = ["secretary", "treasurer", "auditor"];
+const CHAIR_ROLES: Role[] = ["chairperson"];
 
 const url = process.env.DATABASE_ADMIN_URL;
 const email = process.env.SEED_ADMIN_EMAIL?.trim().toLowerCase();
@@ -86,7 +89,15 @@ async function main() {
       password: await hashPassword(password!),
     });
   }
-  await db.insert(schema.societyUsers).values({ societyId: society!.id, userId: admin!.id, roles: ADMIN_ROLES });
+  const [chair] = await db
+    .insert(schema.users)
+    .values({ email: `chair@${DEMO_SLUG}.invalid`, name: "Demo Chairperson (no sign-in)" })
+    .onConflictDoUpdate({ target: schema.users.email, set: { updatedAt: new Date() } })
+    .returning();
+  await db.insert(schema.societyUsers).values([
+    { societyId: society!.id, userId: admin!.id, roles: ADMIN_ROLES },
+    { societyId: society!.id, userId: chair!.id, roles: CHAIR_ROLES },
+  ]);
 
   const accounts = await db
     .insert(schema.ledgerAccounts)
@@ -94,6 +105,9 @@ async function main() {
     .returning();
   const acct = (code: string) => accounts.find((a) => a.code === code)!.id;
   const actor: Actor = { userId: admin!.id, societyId: society!.id, roles: ADMIN_ROLES };
+  const approver: Actor = { userId: chair!.id, societyId: society!.id, roles: CHAIR_ROLES };
+  const postJournalEntry = async (tx: Tx, preparer: Actor, draft: Parameters<typeof submitJournalEntry>[2]) =>
+    approveSubmission(tx, approver, (await submitJournalEntry(tx, preparer, draft)).id);
 
   await withSociety(db, society!.id, async (tx) => {
     const members = [];
