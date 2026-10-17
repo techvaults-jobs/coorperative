@@ -537,3 +537,24 @@ export const demoRequests = pgTable("demo_requests", {
   message: text("message"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Every email the platform sends, or would send. With no email provider configured, messages are
+ * kept here ("logged") for platform staff to forward by hand. Bodies are stored only when a
+ * message wasn't delivered, because they can contain sign-in links.
+ */
+export const outboundMessages = pgTable(
+  "outbound_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    to: text("to").notNull(),
+    subject: text("subject").notNull(),
+    kind: text("kind").notNull(),
+    status: text("status").notNull(),
+    body: text("body"),
+    error: text("error"),
+    providerId: text("provider_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("outbound_messages_created").on(t.createdAt), check("outbound_messages_status", sql`${t.status} in ('sent', 'logged', 'failed')`)],
+);

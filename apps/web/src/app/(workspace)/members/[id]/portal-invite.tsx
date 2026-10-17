@@ -13,7 +13,10 @@ export function PortalInvite({ memberId, defaultEmail }: { memberId: string; def
     return (
       <div className="flex flex-col gap-3 text-sm" role="status">
         <p className="text-accent font-medium">Invitation created for {state.email}.</p>
-        <p className="text-muted text-xs">Send this private link to the member. It works once, expires in 7 days and can&apos;t be shown again.</p>
+        <p className="text-muted text-xs">
+          {state.delivered ? "We've emailed it to the member. You can also share the link yourself." : "Email isn't set up yet, so send this private link to the member yourself."} It works
+          once, expires in 7 days and can&apos;t be shown again.
+        </p>
         <label htmlFor="member-invite-link" className="sr-only">
           Invitation link
         </label>

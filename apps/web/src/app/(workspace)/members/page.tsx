@@ -1,5 +1,5 @@
 import { listMembers } from "@techvaults/db";
-import { Search, UserPlus, Users } from "lucide-react";
+import { Search, Upload, UserPlus, Users } from "lucide-react";
 import Link from "next/link";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -36,10 +36,16 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
         description="The society's member register. Every change is recorded in the audit trail."
         actions={
           hasPermission(ws, "members.write") && (
-            <Link href="/members/new" className={buttonClass("primary")}>
-              <UserPlus className="size-4" aria-hidden />
-              Add member
-            </Link>
+            <>
+              <Link href="/members/import" className={buttonClass("secondary")}>
+                <Upload className="size-4" aria-hidden />
+                Import
+              </Link>
+              <Link href="/members/new" className={buttonClass("primary")}>
+                <UserPlus className="size-4" aria-hidden />
+                Add member
+              </Link>
+            </>
           )
         }
       />

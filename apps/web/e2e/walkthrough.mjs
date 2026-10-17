@@ -147,6 +147,15 @@ try {
   await page.click("form:has(#memberNo) button[type=submit]");
   await page.getByText("already exists").waitFor({ timeout: 10000 });
   check("duplicate member number is refused", true);
+  // Import: a member register pasted from a spreadsheet
+  await page.goto(`${BASE}/members/import`, { waitUntil: "networkidle" });
+  await page.fill("#members-csv", `Member no,Full name,Staff ID,Department,Joined\nIMP-${stamp}-1,Ngozi Obi,IMP/${stamp}/1,Library,05/01/2024\nIMP-${stamp}-2,Sule Hassan,IMP/${stamp}/2,Works,`);
+  await page.getByRole("button", { name: "Check file" }).click();
+  await page.getByText("2 members ready").waitFor({ timeout: 10000 });
+  await page.getByRole("button", { name: "Import members" }).click();
+  await page.getByText("2 members added to the register.").waitFor({ timeout: 15000 });
+  check("a member register imports from a spreadsheet", true);
+
   await page.goto(`${BASE}/members?q=Chiamaka`, { waitUntil: "networkidle" });
   await page.click("text=Chiamaka Eze");
   await page.getByRole("heading", { name: "Balances" }).waitFor({ state: "attached" });
@@ -411,6 +420,58 @@ try {
   await member.goto(`${BASE}/my/apply`, { waitUntil: "networkidle" });
   check("the member can start a loan application", (await member.getByText("Do I qualify?").count()) === 1);
   await memberContext.close();
+
+  // Staff console: onboard a society; email is held in the outbox when no provider is set up
+  if (process.env.STAFF_EMAIL) {
+    await new Promise((r) => setTimeout(r, 11_000)); // sign-in attempts share one rate-limit bucket locally
+    const staffContext = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    const staff = watch(await staffContext.newPage());
+    await staff.goto(`${BASE}/sign-in`, { waitUntil: "networkidle" });
+    await staff.fill("#email", process.env.STAFF_EMAIL);
+    await staff.fill("#password", process.env.STAFF_PASSWORD);
+    await staff.click("button[type=submit]");
+    await staff.waitForURL(/\/(security|platform)/, { timeout: 15000 });
+    if (staff.url().includes("/security")) {
+      await setUpTwoFactor(staff, process.env.STAFF_PASSWORD).catch(() => {});
+      await staff.goto(`${BASE}/platform`, { waitUntil: "networkidle" });
+    }
+    check("platform staff reach the staff console", (await staff.getByRole("heading", { name: "Societies" }).count()) === 1);
+    await staff.goto(`${BASE}/platform/societies/new`, { waitUntil: "networkidle" });
+    await staff.fill("#name", `E2E Transport Union Cooperative ${stamp}`);
+    await staff.fill("#state", "Oyo");
+    await staff.fill("#registrar", "Oyo State Director of Co-operatives");
+    await staff.selectOption("#sector", { label: "Transport" });
+    await staff.fill("#secretaryEmail", `secretary.${stamp}@example.ng`);
+    await staff.getByRole("button", { name: "Create society and invitation" }).click();
+    await staff.locator("#secretary-link").waitFor({ timeout: 15000 });
+    check("staff onboard a new society with a secretary invitation", (await staff.locator("#secretary-link").inputValue()).includes("/invite/"));
+
+    // Password reset: the portal member asks for a link; with no email provider it's held in the outbox.
+    const resetter = watch(await (await browser.newContext()).newPage());
+    await resetter.goto(`${BASE}/forgot-password`, { waitUntil: "networkidle" });
+    await resetter.fill("#email", `member.e2e.${stamp}@example.ng`);
+    await resetter.getByRole("button", { name: "Send reset link" }).click();
+    await resetter.getByText("Check your email").waitFor({ timeout: 10000 });
+    await staff.goto(`${BASE}/platform/outbox`, { waitUntil: "networkidle" });
+    const resetRow = staff.locator("tr", { hasText: `member.e2e.${stamp}@example.ng` }).filter({ hasText: "Reset your" });
+    await resetRow.locator("summary").click();
+    const body = await resetRow.locator("pre").textContent();
+    const resetUrl = body.match(/https?:\/\/\S+reset-password\S+/)?.[0];
+    check("password reset email is held in the outbox", !!resetUrl);
+    await resetter.goto(resetUrl.replace(/^https?:\/\/[^/]+/, BASE), { waitUntil: "networkidle" });
+    await resetter.fill("#password", `new-member-pass-${stamp}`);
+    await resetter.fill("#confirm", `new-member-pass-${stamp}`);
+    await resetter.getByRole("button", { name: "Change password" }).click();
+    await resetter.getByText("Your password has been changed.").waitFor({ timeout: 10000 });
+    await new Promise((r) => setTimeout(r, 11_000));
+    await resetter.goto(`${BASE}/sign-in`, { waitUntil: "networkidle" });
+    await resetter.fill("#email", `member.e2e.${stamp}@example.ng`);
+    await resetter.fill("#password", `new-member-pass-${stamp}`);
+    await resetter.click("button[type=submit]");
+    await resetter.waitForURL(/\/my$/, { timeout: 15000 });
+    check("the member signs in with the new password", true);
+    await staffContext.close();
+  }
 
   // Mobile layout
   await page.setViewportSize({ width: 390, height: 800 });

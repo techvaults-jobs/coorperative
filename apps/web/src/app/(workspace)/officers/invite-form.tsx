@@ -16,8 +16,10 @@ export function InviteForm({ roles }: { roles: RoleOption[] }) {
       <div className="flex flex-col gap-3 text-sm" role="status">
         <p className="text-accent font-medium">Invitation created for {state.email}.</p>
         <p className="text-muted text-xs">
-          Send this link to them privately, for example by WhatsApp or email. Anyone with the link can accept it, and it can&apos;t be
-          shown again.
+          {state.delivered
+            ? "We've emailed it to them. You can also send the link yourself:"
+            : "Email isn't set up yet, so send this link to them privately, for example by WhatsApp."}{" "}
+          Anyone with the link can accept it, and it can&apos;t be shown again.
         </p>
         <label htmlFor="invite-link" className="sr-only">
           Invitation link

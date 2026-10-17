@@ -11,4 +11,7 @@ export * from "./services/products.js";
 export * from "./services/loans.js";
 export * from "./services/payroll.js";
 export * from "./services/leads.js";
+export * from "./services/platform.js";
+export * from "./services/importing.js";
+export * from "./services/outbox.js";
 export * from "./services/societies.js";

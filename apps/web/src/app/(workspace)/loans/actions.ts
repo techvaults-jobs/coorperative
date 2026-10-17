@@ -1,10 +1,12 @@
 "use server";
 
-import { LedgerError, parseNaira, type EligibilityCheck, type Kobo } from "@techvaults/core";
+import { formatNaira, LedgerError, parseNaira, type EligibilityCheck, type Kobo } from "@techvaults/core";
 import {
   applyForLoan,
   decideLoan,
   disburseLoan,
+  getLoan,
+  getMember,
   loanEligibility,
   LoanError,
   PermissionError,
@@ -13,6 +15,7 @@ import {
 } from "@techvaults/db";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { appUrl, mails, sendMail } from "@/lib/mail";
 import { inSociety, requireWorkspace } from "@/lib/session";
 import type { FormState } from "../actions";
 
@@ -101,11 +104,20 @@ export async function loanDecisionAction(_prev: FormState, formData: FormData): 
   const decision = text(formData, "decision");
   const reason = text(formData, "reason");
   try {
-    await inSociety(ws, (tx) => {
-      if (decision === "approve" || decision === "reject") return decideLoan(tx, ws.actor, loanId, decision, reason);
-      if (decision === "withdraw") return withdrawLoan(tx, ws.actor, loanId, reason);
-      throw new LoanError("Unknown decision.");
+    const notify = await inSociety(ws, async (tx) => {
+      if (decision === "withdraw") return withdrawLoan(tx, ws.actor, loanId, reason).then(() => null);
+      if (decision !== "approve" && decision !== "reject") throw new LoanError("Unknown decision.");
+      await decideLoan(tx, ws.actor, loanId, decision, reason);
+      const loan = await getLoan(tx, ws.actor, loanId);
+      const member = loan && (await getMember(tx, ws.actor, loan.memberId).catch(() => undefined));
+      return loan && member?.email ? { loan, email: member.email } : null;
     });
+    // Tell the member, if we have their email. A failed email never undoes the decision.
+    if (notify) {
+      await sendMail(
+        mails.loanDecision(notify.email, ws.society.societyName, notify.loan.productName, formatNaira(notify.loan.amount), decision === "approve", reason || null, `${appUrl()}/my/loans/${loanId}`),
+      );
+    }
   } catch (e) {
     return { ok: false, message: explain(e) };
   }

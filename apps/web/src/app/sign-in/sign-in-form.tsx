@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
@@ -47,6 +48,9 @@ export function SignInForm() {
       <Button type="submit" disabled={pending}>
         {pending ? "Signing in…" : "Sign in"}
       </Button>
+      <Link href="/forgot-password" className="text-accent text-center text-sm hover:underline">
+        Forgot your password?
+      </Link>
     </form>
   );
 }

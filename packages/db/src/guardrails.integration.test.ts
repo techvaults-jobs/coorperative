@@ -29,6 +29,8 @@ import {
   type Actor,
 } from "./services/ledger.js";
 import { createMember, listMembers, updateMember } from "./services/members.js";
+import { createSociety, listPlatformSocieties } from "./services/platform.js";
+import { importMembers, previewMemberImport, previewOpeningBalances, submitOpeningBalances } from "./services/importing.js";
 import { financialPosition, incomeStatement, memberCounts, memberStatement, monthlyFlows } from "./services/reports.js";
 import { createAccount, getSocietySettings, setAccountActive, updateSocietySettings } from "./services/settings.js";
 import { approveProductPolicy, listProducts, proposePolicyChange, proposeProduct } from "./services/products.js";
@@ -741,5 +743,60 @@ describe.runIf(ADMIN)("database guardrails", () => {
     await expect(
       withSociety(app.db, ids.socA, (tx) => applyForLoan(tx, me, { memberId: a1.id, productId: loanProduct!.id, amount: parseNaira("5000"), termMonths: 2, purpose: "School books", guarantorIds: [a2.id] })),
     ).rejects.toThrow(/running loan/);
+  });
+
+  it("lets TechVaults staff onboard a society, seeing counts but not finances", async () => {
+    const input = { name: "Kano Traders Thrift Society (test)", state: "Kano", registrar: "Kano State Director of Co-operatives", sector: "market", secretaryEmail: "Sec@Example.ng" };
+    await expect(createSociety(app.db, ids.treasurer, input)).rejects.toBeInstanceOf(PermissionError);
+    await expect(listPlatformSocieties(app.db, ids.treasurer)).rejects.toThrow(/Platform staff only|platform staff/i);
+    await admin`update users set is_platform_staff = true where id = ${ids.auditor}`;
+    const created = await createSociety(app.db, ids.auditor, input);
+    const again = await createSociety(app.db, ids.auditor, { ...input, secretaryEmail: "other@example.ng" });
+    const [a, b] = (await admin`select slug from societies where id in (${created.societyId}, ${again.societyId}) order by created_at`) as unknown as { slug: string }[];
+    expect(a!.slug).toBe("kano-traders-thrift-society-test");
+    expect(b!.slug).not.toBe(a!.slug);
+    const accounts = (await admin`select code from ledger_accounts where society_id = ${created.societyId} order by code`) as unknown as { code: string }[];
+    expect(accounts.map((x) => x.code)).toContain("4300"); // market levies
+    expect(accounts.map((x) => x.code)).toContain("3900");
+    const invite = await findInvitation(app.db, created.token);
+    expect(invite).toMatchObject({ status: "valid", email: "sec@example.ng", roles: ["secretary"], societyId: created.societyId });
+    const list = await listPlatformSocieties(app.db, ids.auditor);
+    expect(list.find((x) => x.id === created.societyId)).toMatchObject({ sector: "market", members: 0, officers: 0 });
+    expect(list.find((x) => x.id === ids.socA)!.members).toBeGreaterThan(0);
+    // The summary carries no money fields.
+    expect(Object.keys(list[0]!)).not.toContain("balance");
+    await admin`update users set is_platform_staff = false where id = ${ids.auditor}`;
+  });
+
+  it("imports a member register and opening balances, all or nothing", async () => {
+    const secretary = actor(["secretary"]);
+    const bad = "Member no,Full name,Staff ID,Joined\nA-001,Clash With Existing,,05/01/2024\nIMP-01,Ngozi Obi,UL/9001,05/01/2024\nIMP-02,Sule Hassan,UL/9002,\n";
+    const preview = await withSociety(app.db, ids.socA, (tx) => previewMemberImport(tx, secretary, bad));
+    expect(preview.rows.map((r) => r.memberNo)).toEqual(["IMP-01", "IMP-02"]);
+    expect(preview.issues).toEqual([{ line: 2, message: "member no A-001 is already on the register" }]);
+    await expect(withSociety(app.db, ids.socA, (tx) => importMembers(tx, secretary, bad))).rejects.toThrow(/nothing was imported/);
+    await expect(withSociety(app.db, ids.socA, (tx) => importMembers(tx, treasurer(), bad))).rejects.toBeInstanceOf(PermissionError);
+    const good = bad.split("\n").filter((l) => !l.startsWith("A-001")).join("\n");
+    expect(await withSociety(app.db, ids.socA, (tx) => importMembers(tx, secretary, good))).toBe(2);
+    const imported = (await withSociety(app.db, ids.socA, (tx) => listMembers(tx, secretary))).filter((m) => m.memberNo.startsWith("IMP-"));
+    expect(imported.map((m) => [m.memberNo, m.staffId, m.joinedOn])).toEqual([["IMP-01", "UL/9001", "2024-01-05"], ["IMP-02", "UL/9002", null]]);
+
+    // Opening balances: savings and shares only, every member must exist.
+    const withLoan = "Member no,2100,3100,1300\nIMP-01,50000,10000,\nIMP-02,25000.50,,\nNOPE,1,,\n";
+    const p1 = await withSociety(app.db, ids.socA, (tx) => previewOpeningBalances(tx, treasurer(), withLoan));
+    expect(p1.issues.map((i) => i.message).join(" ")).toMatch(/1300.*Loan balances come across with their loans.*NOPE isn't on the register/s);
+    const csv = "Member no,2100,3100\nIMP-01,50000,10000\nIMP-02,25000.50,\n";
+    const p2 = await withSociety(app.db, ids.socA, (tx) => previewOpeningBalances(tx, treasurer(), csv));
+    expect(p2.issues).toEqual([]);
+    expect(p2.total).toBe(parseNaira("85000.50"));
+    const s = await withSociety(app.db, ids.socA, (tx) => submitOpeningBalances(tx, treasurer(), csv, "2026-09-30"));
+    const again = await withSociety(app.db, ids.socA, (tx) => submitOpeningBalances(tx, treasurer(), csv, "2026-09-30"));
+    expect(again).toMatchObject({ id: s.id, created: false }); // the same file can't be brought across twice
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, actor(["chairperson"], ids.chair), s.id));
+    const ngozi = imported[0]!;
+    const balances = await withSociety(app.db, ids.socA, (tx) => memberBalances(tx, ngozi.id));
+    expect(balances.map((b) => [b.code, b.balance])).toEqual([["2100", parseNaira("50000")], ["3100", parseNaira("10000")]]);
+    const tb = await withSociety(app.db, ids.socA, (tx) => trialBalance(tx));
+    expect(tb.find((r) => r.code === "3900")!.balance).toBe(kobo(-parseNaira("85000.50")));
   });
 });

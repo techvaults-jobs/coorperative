@@ -150,3 +150,67 @@ export const BRAND_PRESETS = [
   { name: "Teal", color: "#0f6f7a" },
   { name: "Forest", color: "#2f6b1f" },
 ] as const;
+
+// ---------------------------------------------------------------------------
+// Starter chart of accounts
+
+export interface ChartAccount {
+  code: string;
+  name: string;
+  class: "asset" | "liability" | "equity" | "income" | "expense";
+  memberControl: boolean;
+}
+
+const BASE_CHART: ChartAccount[] = [
+  { code: "1100", name: "Bank – current account", class: "asset", memberControl: false },
+  { code: "1200", name: "Cash in hand", class: "asset", memberControl: false },
+  { code: "1300", name: "Members' loans", class: "asset", memberControl: true },
+  { code: "2100", name: "Members' ordinary savings", class: "liability", memberControl: true },
+  { code: "2900", name: "Unidentified remittances (suspense)", class: "liability", memberControl: false },
+  { code: "3100", name: "Members' share capital", class: "equity", memberControl: true },
+  { code: "3200", name: "Statutory reserve fund (Act s.34)", class: "equity", memberControl: false },
+  { code: "3300", name: "Education fund (Act s.34)", class: "equity", memberControl: false },
+  { code: "3900", name: "Opening balances", class: "equity", memberControl: false },
+  { code: "4100", name: "Entrance fees", class: "income", memberControl: false },
+  { code: "4200", name: "Interest on loans", class: "income", memberControl: false },
+  { code: "4900", name: "Other income", class: "income", memberControl: false },
+  { code: "5100", name: "Bank charges", class: "expense", memberControl: false },
+  { code: "5200", name: "Stationery and printing", class: "expense", memberControl: false },
+  { code: "5300", name: "Meetings and AGM expenses", class: "expense", memberControl: false },
+  { code: "5400", name: "Audit fees", class: "expense", memberControl: false },
+];
+
+const SECTOR_EXTRAS: Partial<Record<Sector, ChartAccount[]>> = {
+  agricultural: [
+    { code: "4300", name: "Produce marketing commission", class: "income", memberControl: false },
+    { code: "5500", name: "Extension and training", class: "expense", memberControl: false },
+  ],
+  transport: [
+    { code: "4300", name: "Levies and dues", class: "income", memberControl: false },
+    { code: "5500", name: "Park and union expenses", class: "expense", memberControl: false },
+  ],
+  market: [{ code: "4300", name: "Levies and dues", class: "income", memberControl: false }],
+  housing: [{ code: "2200", name: "Members' housing contributions", class: "liability", memberControl: true }],
+  multipurpose: [
+    { code: "2200", name: "Members' special savings", class: "liability", memberControl: true },
+    { code: "4300", name: "Trading income", class: "income", memberControl: false },
+  ],
+};
+
+/** A sensible starting chart for a new society of this sector; the society can change it. */
+export function starterChart(sector: Sector): ChartAccount[] {
+  return [...BASE_CHART, ...(SECTOR_EXTRAS[sector] ?? [])].sort((a, b) => a.code.localeCompare(b.code));
+}
+
+/** A URL-safe name for a society, e.g. "Unilag Staff Co-op (Lagos)" → "unilag-staff-co-op-lagos". */
+export function slugify(name: string): string {
+  return (
+    name
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48) || "society"
+  );
+}

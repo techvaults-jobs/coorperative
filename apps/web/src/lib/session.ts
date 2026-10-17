@@ -10,7 +10,7 @@ import { db } from "./db";
 export const SOCIETY_COOKIE = "tv_society";
 
 export interface Viewer {
-  user: { id: string; name: string; email: string; twoFactorEnabled: boolean };
+  user: { id: string; name: string; email: string; twoFactorEnabled: boolean; isPlatformStaff: boolean };
   societies: SocietyMembership[];
 }
 
@@ -25,9 +25,12 @@ export const requireViewer = cache(async (): Promise<Viewer> => {
   if (!session) redirect("/sign-in");
   const user = session.user;
   // Read the two-factor flag from the database, not the session payload, which can lag behind.
-  const [row] = await db().select({ twoFactorEnabled: schema.users.twoFactorEnabled }).from(schema.users).where(eq(schema.users.id, user.id));
+  const [row] = await db()
+    .select({ twoFactorEnabled: schema.users.twoFactorEnabled, isPlatformStaff: schema.users.isPlatformStaff })
+    .from(schema.users)
+    .where(eq(schema.users.id, user.id));
   return {
-    user: { id: user.id, name: user.name, email: user.email, twoFactorEnabled: !!row?.twoFactorEnabled },
+    user: { id: user.id, name: user.name, email: user.email, twoFactorEnabled: !!row?.twoFactorEnabled, isPlatformStaff: !!row?.isPlatformStaff },
     societies: await listUserSocieties(db(), user.id),
   };
 });
@@ -38,7 +41,7 @@ export const requireViewer = cache(async (): Promise<Viewer> => {
  */
 export const requireWorkspace = cache(async (): Promise<Workspace> => {
   const viewer = await requireViewer();
-  if (viewer.societies.length === 0) redirect("/no-society");
+  if (viewer.societies.length === 0) redirect(viewer.user.isPlatformStaff ? "/platform" : "/no-society");
   const chosen = (await cookies()).get(SOCIETY_COOKIE)?.value;
   const society = viewer.societies.find((s) => s.societyId === chosen) ?? viewer.societies[0]!;
   // Members who aren't officers use the member portal, not the officers' workspace.
@@ -75,3 +78,11 @@ export async function inSociety<T>(workspace: Workspace, fn: (tx: Tx) => Promise
 export function hasPermission(workspace: Workspace, permission: Permission): boolean {
   return can(workspace.actor.roles, permission);
 }
+
+/** TechVaults platform staff, with two-factor on (unless switched off for the preview). */
+export const requirePlatformStaff = cache(async (): Promise<Viewer> => {
+  const viewer = await requireViewer();
+  if (!viewer.user.isPlatformStaff) redirect("/overview");
+  if (!viewer.user.twoFactorEnabled && process.env.REQUIRE_TWO_FACTOR !== "false") redirect("/security?required=1");
+  return viewer;
+});

@@ -28,12 +28,27 @@ TEST_PG_URL=postgres://postgres@localhost:5432/postgres pnpm --filter @techvault
 DATABASE_ADMIN_URL=... APP_DB_PASSWORD=... pnpm --filter @techvaults/db db:migrate
 SEED_ADMIN_EMAIL=... SEED_ADMIN_PASSWORD=... DATABASE_ADMIN_URL=... pnpm --filter @techvaults/web seed
 DATABASE_URL=postgres://coop_app:...@.../db BETTER_AUTH_SECRET=... BETTER_AUTH_URL=http://localhost:3000 pnpm dev
-BASE=http://localhost:3000 EMAIL=... PASSWORD=... pnpm --filter @techvaults/web e2e   # browser walkthrough on a fresh seed (58 checks)
+BASE=http://localhost:3000 EMAIL=... PASSWORD=... pnpm --filter @techvaults/web e2e   # browser walkthrough on a fresh seed (63 checks)
 ```
 
 ## Deploy (Railway)
 
 `railway up --service web` from the repo root. The container runs migrations, then the optional seed, then the app.
-Required variables on `web`: `DATABASE_URL` (coop_app), `DATABASE_ADMIN_URL` (owner), `APP_DB_PASSWORD`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`; optional `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`.
+Required variables on `web`: `DATABASE_URL` (coop_app), `DATABASE_ADMIN_URL` (owner), `APP_DB_PASSWORD`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`.
+
+Optional:
+
+| Variable | Effect |
+|---|---|
+| `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | Demo societies and their administrator |
+| `PLATFORM_STAFF_EMAIL`, `PLATFORM_STAFF_PASSWORD` | A TechVaults staff account for the staff console (`/platform`): onboard societies, demo requests, email outbox |
+| `RESEND_API_KEY`, `MAIL_FROM` (e.g. `Cooperative Vaults <no-reply@yourdomain>`), `MAIL_REPLY_TO` | Send email (invitations, password reset, loan decisions). Without them, messages are held in the staff outbox |
+| `REQUIRE_TWO_FACTOR=false` | Preview only: don't force two-factor on officers and staff |
+
+### Onboarding a society
+
+1. Sign in as platform staff, open **Staff console → Onboard a society**, and send the secretary their invitation.
+2. The secretary sets up the society (Settings), imports the register (**Members → Import**), and invites the treasurer and chairperson.
+3. The treasurer imports opening savings and share balances (**Members → Import → Opening balances**), a second officer approves the entry, and the treasurer brings bank and cash balances across against 3900 Opening balances.
 
 The app always connects as the restricted `coop_app` role; migrations run as the database owner.

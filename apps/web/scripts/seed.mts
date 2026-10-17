@@ -462,7 +462,26 @@ async function seedContributions(slug: string) {
   if (set) console.log(`Set monthly contributions for ${set} members of ${society.name}.`);
 }
 
+/** A TechVaults staff account for the platform console, from PLATFORM_STAFF_EMAIL / PLATFORM_STAFF_PASSWORD. */
+async function seedPlatformStaff() {
+  const staffEmail = process.env.PLATFORM_STAFF_EMAIL?.trim().toLowerCase();
+  const staffPassword = process.env.PLATFORM_STAFF_PASSWORD;
+  if (!staffEmail || !staffPassword) return;
+  if (staffPassword.length < 12) throw new Error("PLATFORM_STAFF_PASSWORD must be at least 12 characters");
+  const [user] = await db
+    .insert(schema.users)
+    .values({ email: staffEmail, name: "TechVaults Staff", emailVerified: true, isPlatformStaff: true })
+    .onConflictDoUpdate({ target: schema.users.email, set: { isPlatformStaff: true, updatedAt: new Date() } })
+    .returning();
+  const hasCredential = await db.select().from(schema.accounts).where(sql`user_id = ${user!.id} and provider_id = 'credential'`);
+  if (hasCredential.length === 0) {
+    await db.insert(schema.accounts).values({ userId: user!.id, accountId: user!.id, providerId: "credential", password: await hashPassword(staffPassword) });
+    console.log(`Platform staff account ready: ${staffEmail}`);
+  }
+}
+
 try {
+  await seedPlatformStaff();
   await seedSociety(staffSociety);
   await seedSociety(farmSociety);
   await seedProducts(staffSociety.slug, "Regular loan", false);
