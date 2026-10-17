@@ -29,6 +29,7 @@ import {
   type Actor,
 } from "./services/ledger.js";
 import { createMember, listMembers, updateMember } from "./services/members.js";
+import { memberCounts, monthlyFlows } from "./services/reports.js";
 import {
   acceptInvitation,
   changeOfficerRoles,
@@ -437,5 +438,16 @@ describe.runIf(ADMIN)("database guardrails", () => {
     const events = await withSociety(app.db, ids.socA, (tx) => listAuditEvents(tx, ids.socA));
     expect(events.slice(0, 2).map((e) => e.action)).toEqual(["officer.removed", "officer.roles_changed"]);
     expect(await withSociety(app.db, ids.socA, (tx) => verifySocietyAuditChain(tx, ids.socA))).toMatchObject({ ok: false }); // tampered earlier in this suite
+  });
+
+  it("reports monthly flows from posted entries, ignoring reversed pairs", async () => {
+    const flows = await withSociety(app.db, ids.socA, (tx) => monthlyFlows(tx, treasurer(), { months: 3, asOf: "2026-11-15" }));
+    expect(flows.map((f) => f.month)).toEqual(["2026-09-01", "2026-10-01", "2026-11-01"]);
+    // October: the A-001 payroll remittance credited ₦10,000 savings + ₦5,000 shares to the member.
+    expect(flows[1]!.contributions).toBe(parseNaira("15000"));
+    expect(flows[2]!.contributions).toBe(0n);
+    const counts = await withSociety(app.db, ids.socA, (tx) => memberCounts(tx, actor(["secretary"])));
+    expect(counts).toEqual({ total: 1, byStatus: { active: 1 } });
+    await expect(withSociety(app.db, ids.socA, (tx) => monthlyFlows(tx, actor(["secretary"])))).rejects.toBeInstanceOf(PermissionError);
   });
 });

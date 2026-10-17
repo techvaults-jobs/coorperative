@@ -4,13 +4,23 @@ import { EmptyState, PageHeader } from "@/components/ui/page-header";
 import { Table, Td, Th } from "@/components/ui/table";
 import { hasPermission, inSociety, requireWorkspace } from "@/lib/session";
 
-export const metadata = { title: "Audit trail · TechVaults Cooperative" };
+export const metadata = { title: "Audit trail" };
 
 const ACTION_LABEL: Record<string, string> = {
   "member.created": "Member added",
   "member.updated": "Member changed",
-  "journal.posted": "Entry posted",
-  "journal.reversed": "Entry reversed",
+  "journal.submitted": "Entry submitted for approval",
+  "journal.reversal_requested": "Reversal requested",
+  "journal.posted": "Entry approved and posted",
+  "journal.reversed": "Reversal approved and posted",
+  "journal.rejected": "Entry rejected",
+  "journal.withdrawn": "Entry withdrawn",
+  "officer.invited": "Officer invited",
+  "officer.invitation_revoked": "Invitation revoked",
+  "officer.invitation_replaced": "Invitation replaced",
+  "officer.joined": "Officer joined",
+  "officer.roles_changed": "Officer roles changed",
+  "officer.removed": "Officer access removed",
 };
 
 export default async function AuditPage() {

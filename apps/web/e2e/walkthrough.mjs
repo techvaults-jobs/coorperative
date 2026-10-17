@@ -104,7 +104,8 @@ try {
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/overview.png`, fullPage: true });
 
   // Sign out and back in: two-factor must now be asked for
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: "Account menu" }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
   await page.waitForURL(/\/sign-in/);
   await page.fill("#email", EMAIL);
   await page.fill("#password", PASSWORD);
@@ -124,6 +125,7 @@ try {
   const rows = await page.locator("tbody tr").count();
   check("member register lists seeded members", rows >= 10, `${rows} rows`);
   const stamp = Date.now().toString().slice(-6);
+  await page.goto(`${BASE}/members/new`, { waitUntil: "networkidle" });
   await page.fill("#memberNo", `E2E-${stamp}`);
   await page.fill("#fullName", "Test Member E2E");
   await page.fill("#staffId", `E2E/${stamp}`);
@@ -137,14 +139,23 @@ try {
   check("duplicate member number is refused", true);
   await page.goto(`${BASE}/members?q=Chiamaka`, { waitUntil: "networkidle" });
   await page.click("text=Chiamaka Eze");
-  await page.getByRole("heading", { name: "Balances" }).waitFor();
-  const loan = await page.locator("dd", { hasText: "150,000.00" }).count();
+  await page.getByRole("heading", { name: "Balances" }).waitFor({ state: "attached" });
+  const loan = await page.getByText("₦150,000.00", { exact: true }).count();
   check("member page shows balances from the ledger", loan > 0);
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/member.png`, fullPage: true });
 
   // Journal: prepare, double-submit; nothing posts until someone else approves
   await page.goto(`${BASE}/ledger`, { waitUntil: "networkidle" });
   const lastNo = Number((await page.locator("article .font-mono.text-xs").first().textContent()).replace("#", ""));
+  // ⌘K finds a member and opens their page
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+k" : "Control+k");
+  await page.getByRole("dialog", { name: "Command palette" }).waitFor();
+  await page.keyboard.type("Chiamaka");
+  await page.getByRole("option", { name: /Chiamaka Eze/ }).waitFor({ timeout: 5000 });
+  await page.keyboard.press("ArrowDown");
+  await page.getByRole("option", { name: /Chiamaka Eze/ }).click();
+  await page.waitForURL(/\/members\/[0-9a-f-]{36}/);
+  check("command palette finds a member", true);
   const prepare = async (description, amount) => {
     await page.goto(`${BASE}/ledger`, { waitUntil: "networkidle" });
     await page.fill("#description", description);

@@ -3,13 +3,14 @@ import { listAccounts, listJournal, listMembers, listSubmissions, pendingReversa
 import Link from "next/link";
 import { randomUUID } from "node:crypto";
 import { EntryLines, entryTotal } from "@/components/entry-lines";
+import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
 import { hasPermission, inSociety, requireWorkspace } from "@/lib/session";
 import { PostEntryForm } from "./post-entry-form";
 import { ReverseEntryForm } from "./reverse-entry-form";
 
-export const metadata = { title: "Journal · TechVaults Cooperative" };
+export const metadata = { title: "Journal" };
 
 export default async function LedgerPage({ searchParams }: { searchParams: Promise<{ reversal?: string }> }) {
   const ws = await requireWorkspace();
@@ -32,19 +33,19 @@ export default async function LedgerPage({ searchParams }: { searchParams: Promi
         description="Every posted entry, newest first. An entry is posted only after a second officer approves it, and is never edited. A mistake is corrected by a linked reversal."
       />
       {reversal === "requested" && (
-        <p role="status" className="bg-accent-soft text-accent rounded-md px-4 py-3 text-sm">
-          Reversal requested. It will be posted when another officer approves it.
-        </p>
+        <Alert tone="success">Reversal requested. It will be posted when another officer approves it.</Alert>
       )}
       {pending.length > 0 && (
-        <p role="status" className="bg-warning-soft text-warning flex flex-wrap items-center justify-between gap-2 rounded-md px-4 py-3 text-sm">
-          <span>
-            {pending.length === 1 ? "1 entry is" : `${pending.length} entries are`} waiting for approval and not yet in the journal.
-          </span>
-          <Link href="/approvals" className="font-medium underline-offset-2 hover:underline">
-            Open approvals →
-          </Link>
-        </p>
+        <Alert
+          tone="warning"
+          actions={
+            <Link href="/approvals" className="font-semibold underline-offset-2 hover:underline">
+              Open approvals →
+            </Link>
+          }
+        >
+          {pending.length === 1 ? "1 entry is" : `${pending.length} entries are`} waiting for approval and not yet in the journal.
+        </Alert>
       )}
       <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_340px]">
         <section className="flex min-w-0 flex-col gap-3">
@@ -52,7 +53,7 @@ export default async function LedgerPage({ searchParams }: { searchParams: Promi
           {journal.map((e) => {
             const total = entryTotal(e.lines);
             return (
-              <article key={e.id} className="border-border bg-surface flex flex-col gap-3 rounded-lg border p-4">
+              <article key={e.id} className="border-border bg-surface flex flex-col gap-3 rounded-xl border p-5 shadow-sm">
                 <header className="flex flex-wrap items-start justify-between gap-2">
                   <div className="flex min-w-0 flex-col gap-0.5">
                     <p className="text-sm font-medium">
@@ -80,7 +81,7 @@ export default async function LedgerPage({ searchParams }: { searchParams: Promi
           })}
         </section>
         {canPrepare && (
-          <aside className="border-border bg-surface flex h-fit flex-col gap-4 rounded-lg border p-5 xl:sticky xl:top-8">
+          <aside id="prepare" className="border-border bg-surface flex h-fit flex-col gap-4 rounded-xl border p-5 shadow-sm xl:sticky xl:top-24">
             <div>
               <h2 className="font-semibold">Prepare an entry</h2>
               <p className="text-muted text-xs">

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { AuthShell } from "@/components/auth-shell";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
 import { authClient } from "@/lib/auth-client";
@@ -28,13 +29,10 @@ export default function VerifyPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-[80vh] max-w-sm flex-col justify-center gap-6 px-4 py-12">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Two-factor check</h1>
-        <p className="text-muted text-sm">
-          {useBackup ? "Enter one of the backup codes you saved when you set up two-factor authentication." : "Enter the 6-digit code from your authenticator app."}
-        </p>
-      </div>
+    <AuthShell
+      title="Two-factor check"
+      description={useBackup ? "Enter one of the backup codes you saved when you set up two-factor authentication." : "Enter the 6-digit code from your authenticator app."}
+    >
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
         <Field label={useBackup ? "Backup code" : "Authentication code"} htmlFor="code" error={error}>
           <Input
@@ -55,6 +53,6 @@ export default function VerifyPage() {
           {useBackup ? "Use authenticator app instead" : "Use a backup code instead"}
         </button>
       </form>
-    </main>
+    </AuthShell>
   );
 }

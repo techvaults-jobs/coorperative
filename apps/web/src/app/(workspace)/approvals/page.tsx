@@ -1,13 +1,14 @@
 import { formatNaira } from "@techvaults/core";
 import { listSubmissions } from "@techvaults/db";
 import { EntryLines, entryTotal } from "@/components/entry-lines";
+import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
 import { Table, Td, Th } from "@/components/ui/table";
 import { hasPermission, inSociety, requireWorkspace } from "@/lib/session";
 import { DecisionForm } from "./decision-form";
 
-export const metadata = { title: "Approvals · TechVaults Cooperative" };
+export const metadata = { title: "Approvals" };
 
 const when = (d: Date) => d.toLocaleString("en-NG", { dateStyle: "medium", timeStyle: "short", timeZone: "Africa/Lagos" });
 
@@ -36,9 +37,7 @@ export default async function ApprovalsPage({ searchParams }: { searchParams: Pr
         description="Entries prepared by one officer wait here until a different officer approves them. Nothing reaches the journal or any balance until then."
       />
       {notice && (
-        <p role="status" className="bg-accent-soft text-accent rounded-md px-4 py-3 text-sm">
-          {notice}
-        </p>
+        <Alert tone={done === "rejected" ? "info" : "success"}>{notice}</Alert>
       )}
 
       <section className="flex flex-col gap-3" aria-labelledby="pending-heading">
@@ -49,7 +48,7 @@ export default async function ApprovalsPage({ searchParams }: { searchParams: Pr
         {pending.map((s) => {
           const mine = s.preparedBy === ws.user.id;
           return (
-            <article key={s.id} className="border-border bg-surface flex flex-col gap-3 rounded-lg border p-4">
+            <article key={s.id} className="border-border bg-surface flex flex-col gap-3 rounded-xl border p-5 shadow-sm">
               <header className="flex flex-wrap items-start justify-between gap-2">
                 <div className="flex min-w-0 flex-col gap-0.5">
                   <p className="text-sm font-medium">{s.description}</p>
