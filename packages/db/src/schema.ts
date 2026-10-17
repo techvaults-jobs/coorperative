@@ -148,8 +148,10 @@ export const societyUsers = pgTable(
     societyId: uuid("society_id").notNull().references(() => societies.id),
     userId: uuid("user_id").notNull().references(() => users.id),
     roles: text("roles").array().notNull(),
+    /** The member record this person is, when they use the member portal. FK added in migrations/0012. */
+    memberId: uuid("member_id"),
   },
-  (t) => [primaryKey({ columns: [t.societyId, t.userId] })],
+  (t) => [primaryKey({ columns: [t.societyId, t.userId] }), uniqueIndex("society_users_member").on(t.societyId, t.memberId)],
 );
 
 export const members = pgTable(
@@ -328,6 +330,8 @@ export const officerInvitations = pgTable(
     email: text("email").notNull(),
     roles: text("roles").array().notNull(),
     tokenHash: text("token_hash").notNull().unique(),
+    /** Set for member-portal invitations: the member record the new account is tied to. */
+    memberId: uuid("member_id"),
     invitedBy: uuid("invited_by").notNull().references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),

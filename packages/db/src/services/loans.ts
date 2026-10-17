@@ -26,7 +26,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Tx } from "../client.js";
 import { ledgerAccounts, loanGuarantors, loans, members, products } from "../schema.js";
 import { recordAudit } from "./audit.js";
-import { PermissionError, submitJournalEntry, type Actor } from "./ledger.js";
+import { isSelf, PermissionError, submitJournalEntry, type Actor } from "./ledger.js";
 
 export class LoanError extends Error {
   constructor(message: string) {
@@ -83,7 +83,8 @@ export async function loanEligibility(
   actor: Actor,
   input: { memberId: string; productId: string; amount: Kobo; termMonths: number; guarantors: number; asOf?: string },
 ): Promise<EligibilityResult> {
-  if (!can(actor.roles, "loans.prepare") && !can(actor.roles, "loans.approve")) throw new PermissionError("Your role cannot work on loans");
+  const selfApply = isSelf(actor, input.memberId) && can(actor.roles, "self.apply");
+  if (!can(actor.roles, "loans.prepare") && !can(actor.roles, "loans.approve") && !selfApply) throw new PermissionError("Your role cannot work on loans");
   const { product, policy } = await activeLoanProduct(tx, input.productId);
   const [member] = await tx.select().from(members).where(eq(members.id, input.memberId));
   if (!member) throw new LoanError("Choose a member.");
@@ -110,7 +111,8 @@ export async function applyForLoan(
   actor: Actor,
   input: { memberId: string; productId: string; amount: Kobo; termMonths: number; purpose: string; guarantorIds: string[] },
 ): Promise<{ id: string; loanNo: number }> {
-  if (!can(actor.roles, "loans.prepare")) throw new PermissionError("Your role cannot record loan applications");
+  const selfApply = isSelf(actor, input.memberId) && can(actor.roles, "self.apply");
+  if (!can(actor.roles, "loans.prepare") && !selfApply) throw new PermissionError("Your role cannot record loan applications");
   if (input.purpose.trim().length < 4) throw new LoanError("Say what the loan is for.");
   const guarantorIds = [...new Set(input.guarantorIds)];
   if (guarantorIds.includes(input.memberId)) throw new LoanError("A member can't guarantee their own loan.");
@@ -376,7 +378,9 @@ export interface LoanView {
 
 export async function listLoans(tx: Tx, actor: Actor, opts: { status?: LoanStatus[]; memberId?: string } = {}): Promise<LoanView[]> {
   if (!can(actor.roles, "loans.prepare") && !can(actor.roles, "loans.approve") && !can(actor.roles, "ledger.read")) {
-    throw new PermissionError("Your role cannot view loans");
+    // A member sees only their own loans.
+    if (!actor.memberId || !isSelf(actor, actor.memberId)) throw new PermissionError("Your role cannot view loans");
+    opts = { ...opts, memberId: actor.memberId };
   }
   const rows = await tx.execute<{
     id: string;
@@ -526,4 +530,23 @@ export async function loanAging(tx: Tx, actor: Actor, asOf = today()): Promise<A
     loans: active.sort((a, b) => b.position.daysPastDue - a.position.daysPastDue),
     total: summary.outstanding,
   };
+}
+
+/**
+ * Resolve guarantors a member names by member number, for the member portal. Returns only the
+ * name of each active member found, so a member can confirm the right person without seeing
+ * the register.
+ */
+export async function resolveGuarantors(tx: Tx, actor: Actor, memberNos: string[]): Promise<{ memberNo: string; id: string | null; name: string | null }[]> {
+  if (!actor.memberId || !isSelf(actor, actor.memberId)) throw new PermissionError("Only members can name guarantors this way");
+  const wanted = [...new Set(memberNos.map((n) => n.trim().toUpperCase()).filter(Boolean))].slice(0, 5);
+  if (!wanted.length) return [];
+  const found = await tx
+    .select({ id: members.id, memberNo: members.memberNo, fullName: members.fullName, status: members.status })
+    .from(members)
+    .where(and(eq(members.societyId, actor.societyId), inArray(sql`upper(${members.memberNo})`, wanted)));
+  return wanted.map((n) => {
+    const m = found.find((f) => f.memberNo.toUpperCase() === n && f.status === "active" && f.id !== actor.memberId);
+    return { memberNo: n, id: m?.id ?? null, name: m?.fullName ?? null };
+  });
 }

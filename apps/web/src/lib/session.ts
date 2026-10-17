@@ -41,10 +41,26 @@ export const requireWorkspace = cache(async (): Promise<Workspace> => {
   if (viewer.societies.length === 0) redirect("/no-society");
   const chosen = (await cookies()).get(SOCIETY_COOKIE)?.value;
   const society = viewer.societies.find((s) => s.societyId === chosen) ?? viewer.societies[0]!;
-  if (requiresTwoFactor(society.roles) && !viewer.user.twoFactorEnabled && process.env.REQUIRE_TWO_FACTOR !== "false") {
+  // Members who aren't officers use the member portal, not the officers' workspace.
+  if (!requiresTwoFactor(society.roles)) redirect(society.memberId ? "/my" : "/no-society");
+  if (!viewer.user.twoFactorEnabled && process.env.REQUIRE_TWO_FACTOR !== "false") {
     redirect("/security?required=1");
   }
-  return { ...viewer, society, actor: { userId: viewer.user.id, societyId: society.societyId, roles: society.roles } };
+  return { ...viewer, society, actor: { userId: viewer.user.id, societyId: society.societyId, roles: society.roles, memberId: society.memberId } };
+});
+
+/**
+ * The member portal: the signed-in person's own member record in the chosen society. Anyone
+ * linked to a member record can use it, officers included.
+ */
+export const requirePortal = cache(async (): Promise<Workspace & { memberId: string }> => {
+  const viewer = await requireViewer();
+  const chosen = (await cookies()).get(SOCIETY_COOKIE)?.value;
+  const withMember = viewer.societies.filter((s) => s.memberId && s.roles.includes("member"));
+  if (withMember.length === 0) redirect(viewer.societies.length ? "/overview" : "/no-society");
+  const society = withMember.find((s) => s.societyId === chosen) ?? withMember[0]!;
+  const actor = { userId: viewer.user.id, societyId: society.societyId, roles: society.roles, memberId: society.memberId };
+  return { ...viewer, society, actor, memberId: society.memberId! };
 });
 
 export function requiresTwoFactor(roles: readonly Role[]): boolean {

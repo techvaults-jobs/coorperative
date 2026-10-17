@@ -5,6 +5,7 @@ import {
   approveSubmission,
   changeOfficerRoles,
   createMember,
+  inviteMember,
   inviteOfficer,
   listAccounts,
   OfficerError,
@@ -224,4 +225,18 @@ export async function updateOfficerAction(_prev: FormState, formData: FormData):
   // A removed officer's row (and this form) disappears, so report removal at page level.
   if (remove) redirect("/officers?notice=removed");
   return { ok: true, message: "Roles updated." };
+}
+
+export async function inviteMemberAction(_prev: InviteState, formData: FormData): Promise<InviteState> {
+  const ws = await requireWorkspace();
+  const memberId = text(formData, "memberId");
+  const email = text(formData, "email");
+  try {
+    const { token } = await inSociety(ws, (tx) => inviteMember(tx, ws.actor, memberId, email));
+    const base = (process.env.BETTER_AUTH_URL ?? "http://localhost:3000").replace(/\/$/, "");
+    revalidatePath(`/members/${memberId}`);
+    return { ok: true, email: email.toLowerCase(), link: `${base}/invite/${token}` };
+  } catch (e) {
+    return { ok: false, message: describe(e) };
+  }
 }

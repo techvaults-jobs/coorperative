@@ -32,7 +32,7 @@ import { createMember, listMembers, updateMember } from "./services/members.js";
 import { financialPosition, incomeStatement, memberCounts, memberStatement, monthlyFlows } from "./services/reports.js";
 import { createAccount, getSocietySettings, setAccountActive, updateSocietySettings } from "./services/settings.js";
 import { approveProductPolicy, listProducts, proposePolicyChange, proposeProduct } from "./services/products.js";
-import { applyForLoan, decideLoan, disburseLoan, getLoan, loanAging, loanEligibility, loanPosition, recordRepayment } from "./services/loans.js";
+import { applyForLoan, decideLoan, disburseLoan, getLoan, listLoans, loanAging, loanEligibility, loanPosition, recordRepayment } from "./services/loans.js";
 import { DEFAULT_LOAN_POLICY, DEFAULT_SAVINGS_POLICY, DEFAULT_SHARES_POLICY, kobo } from "@techvaults/core";
 import {
   createPayrollRun,
@@ -47,8 +47,10 @@ import {
   acceptInvitation,
   changeOfficerRoles,
   findInvitation,
+  inviteMember,
   inviteOfficer,
   listOfficers,
+  listOpenInvitations,
   removeOfficer,
   revokeInvitation,
 } from "./services/officers.js";
@@ -384,7 +386,7 @@ describe.runIf(ADMIN)("database guardrails", () => {
       { societyId: ids.socB, userId: ids.chair, roles: ["chairperson"] },
     ]);
     const mine = await listUserSocieties(app.db, ids.treasurer);
-    expect(mine).toEqual([{ societyId: ids.socA, societyName: "Unilag Staff Cooperative (test)", societySlug: "test-a", roles: ["treasurer"] }]);
+    expect(mine).toEqual([{ societyId: ids.socA, societyName: "Unilag Staff Cooperative (test)", societySlug: "test-a", roles: ["treasurer"], memberId: null }]);
     // Direct reads are still limited by row-level security.
     expect(await app.db.select().from(schema.societyUsers)).toEqual([]);
   });
@@ -694,5 +696,50 @@ describe.runIf(ADMIN)("database guardrails", () => {
     const aging = await withSociety(app.db, ids.socA, (tx) => loanAging(tx, treasurer(), "2027-03-15"));
     expect(aging.buckets.reduce((s, b) => s + b.outstanding, 0n)).toBe(aging.total);
     expect(aging.loans.every((l) => l.position.daysPastDue > 30)).toBe(true); // the payroll loan's last instalment fell due in December
+  });
+
+  it("gives a member portal access to their own records only", async () => {
+    const secretary = actor(["secretary"], ids.treasurer);
+    const people = await withSociety(app.db, ids.socA, (tx) => listMembers(tx, actor(["secretary"])));
+    const a1 = people.find((m) => m.memberNo === "A-001")!;
+    const a2 = people.find((m) => m.memberNo === "A-002")!;
+    const invite = await withSociety(app.db, ids.socA, (tx) => inviteMember(tx, secretary, a1.id, "adaeze@example.ng"));
+    const found = await findInvitation(app.db, invite.token);
+    expect(found).toMatchObject({ status: "valid", roles: ["member"], memberId: a1.id });
+    // Member invitations don't clutter the officers' list.
+    expect((await withSociety(app.db, ids.socA, (tx) => listOpenInvitations(tx, secretary))).some((i) => i.email === "adaeze@example.ng")).toBe(false);
+    const [portalUser] = await adminDb.insert(schema.users).values({ email: "adaeze@example.ng", name: "Adaeze (portal)" }).returning();
+    if (found.status !== "valid") throw new Error("unreachable");
+    await withSociety(app.db, ids.socA, (tx) => acceptInvitation(tx, found.id, { id: portalUser!.id, email: "adaeze@example.ng" }));
+    const [membership] = await listUserSocieties(app.db, portalUser!.id);
+    expect(membership).toMatchObject({ roles: ["member"], memberId: a1.id });
+    await expect(withSociety(app.db, ids.socA, (tx) => inviteMember(tx, secretary, a1.id, "other@example.ng"))).rejects.toThrow(/already has portal access/);
+    // The database won't hold a member role without its member record.
+    await rejectsWith(adminDb.insert(schema.societyUsers).values({ societyId: ids.socA, userId: ids.auditor, roles: ["member"] }), /society_users_member_role/);
+
+    const me: Actor = { userId: portalUser!.id, societyId: ids.socA, roles: ["member"], memberId: a1.id };
+    const own = await withSociety(app.db, ids.socA, (tx) => memberStatement(tx, me, a1.id, "2026-01-01", "2027-12-31"));
+    expect(own.length).toBeGreaterThan(0);
+    await expect(withSociety(app.db, ids.socA, (tx) => memberStatement(tx, me, a2.id, "2026-01-01", "2027-12-31"))).rejects.toBeInstanceOf(PermissionError);
+    await expect(withSociety(app.db, ids.socA, (tx) => listJournal(tx, me, { memberId: a2.id }))).rejects.toBeInstanceOf(PermissionError);
+    await expect(withSociety(app.db, ids.socA, (tx) => listJournal(tx, me))).rejects.toBeInstanceOf(PermissionError);
+    const loansSeen = await withSociety(app.db, ids.socA, (tx) => listLoans(tx, me));
+    expect(loansSeen.length).toBeGreaterThan(0);
+    expect(loansSeen.every((l) => l.memberId === a1.id)).toBe(true);
+    await expect(withSociety(app.db, ids.socA, (tx) => listMembers(tx, me))).rejects.toBeInstanceOf(PermissionError);
+
+    // A member may apply for themselves, never for someone else; an officer decides.
+    const [loanProduct] = await withSociety(app.db, ids.socA, (tx) => listProducts(tx, me, { kind: "loan" }));
+    await expect(
+      withSociety(app.db, ids.socA, (tx) => applyForLoan(tx, me, { memberId: a2.id, productId: loanProduct!.id, amount: parseNaira("5000"), termMonths: 2, purpose: "Not mine", guarantorIds: [a1.id] })),
+    ).rejects.toBeInstanceOf(PermissionError);
+    const check = await withSociety(app.db, ids.socA, (tx) => loanEligibility(tx, me, { memberId: a1.id, productId: loanProduct!.id, amount: parseNaira("5000"), termMonths: 2, guarantors: 1 }));
+    expect(check.checks.find((c) => c.key === "running")!.ok).toBe(false); // the payroll-month loan is still running
+    await expect(
+      withSociety(app.db, ids.socA, (tx) => loanEligibility(tx, me, { memberId: a2.id, productId: loanProduct!.id, amount: parseNaira("5000"), termMonths: 2, guarantors: 1 })),
+    ).rejects.toBeInstanceOf(PermissionError);
+    await expect(
+      withSociety(app.db, ids.socA, (tx) => applyForLoan(tx, me, { memberId: a1.id, productId: loanProduct!.id, amount: parseNaira("5000"), termMonths: 2, purpose: "School books", guarantorIds: [a2.id] })),
+    ).rejects.toThrow(/running loan/);
   });
 });

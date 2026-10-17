@@ -385,6 +385,33 @@ try {
   const accent = await page.evaluate(() => getComputedStyle(document.querySelector("main")).getPropertyValue("--accent").trim());
   check("the society's brand colour themes the workspace", accent === "#5b3fbf", accent);
 
+  // Member portal: invited from the member page, sees only their own records
+  await page.goto(`${BASE}/members?q=Funmilayo`, { waitUntil: "networkidle" });
+  await page.click("text=Funmilayo Ogunleye");
+  await page.waitForURL(/\/members\/[0-9a-f-]{36}/);
+  await page.fill("#portal-email", `member.e2e.${stamp}@example.ng`);
+  await page.getByRole("button", { name: "Create invitation link" }).click();
+  const memberLink = await page.locator("#member-invite-link").inputValue({ timeout: 10000 });
+  const memberContext = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+  const member = watch(await memberContext.newPage());
+  await member.goto(memberLink.replace(/^https?:\/\/[^/]+/, BASE), { waitUntil: "networkidle" });
+  await member.fill("#name", "Funmilayo Ogunleye");
+  await member.fill("#password", `e2e-member-${stamp}-passphrase`);
+  await member.fill("#confirm", `e2e-member-${stamp}-passphrase`);
+  await member.click("button[type=submit]");
+  await member.waitForURL(/\/my$/, { timeout: 15000 });
+  check("an invited member lands in their portal without two-factor setup", true);
+  // ₦45,000 seeded, plus ₦22,500 from the payroll month posted earlier in this walkthrough.
+  check("the member sees their own savings", (await member.getByText("My ordinary savings").count()) === 1 && (await member.getByText("₦67,500.00").count()) > 0);
+  if (SHOTS) await member.screenshot({ path: `${SHOTS}/portal-home.png`, fullPage: true });
+  await member.goto(`${BASE}/members`, { waitUntil: "networkidle" });
+  check("a member can't open the officers' register", member.url().endsWith("/my"));
+  await member.goto(`${BASE}/my/statement?from=2026-01-01`, { waitUntil: "networkidle" });
+  check("the member downloads their own statement", (await member.getByText(/Statement · Funmilayo Ogunleye/).count()) > 0);
+  await member.goto(`${BASE}/my/apply`, { waitUntil: "networkidle" });
+  check("the member can start a loan application", (await member.getByText("Do I qualify?").count()) === 1);
+  await memberContext.close();
+
   // Mobile layout
   await page.setViewportSize({ width: 390, height: 800 });
   await page.goto(`${BASE}/members`);

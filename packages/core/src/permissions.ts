@@ -43,6 +43,7 @@ export const PERMISSIONS = [
   "accounts.manage",
   "audit.read",
   "self.read",
+  "self.apply",
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -55,7 +56,7 @@ const GRANTS: Record<Role, readonly Permission[]> = {
   loan_committee: ["members.read", "loans.approve", "ledger.read"],
   payroll_officer: ["payroll.manage"],
   auditor: ["members.read", "ledger.read", "audit.read"],
-  member: ["self.read"],
+  member: ["self.read", "self.apply"],
 };
 
 export function permissionsFor(roles: readonly Role[]): Set<Permission> {

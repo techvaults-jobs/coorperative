@@ -15,8 +15,10 @@ export function ReportFrame({
   period,
   filters,
   csvHref,
+  back = { href: "/reports", label: "Reports" },
   children,
 }: {
+  back?: { href: string; label: string };
   title: string;
   society: string;
   period: string;
@@ -29,7 +31,7 @@ export function ReportFrame({
     <>
       <div data-print-hide>
         <PageHeader
-          back={{ href: "/reports", label: "Reports" }}
+          back={back}
           title={title}
           description={period}
           actions={

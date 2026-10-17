@@ -54,7 +54,8 @@ export async function acceptAsNewOfficer(_prev: AcceptState, formData: FormData)
   }
   await auth().api.signInEmail({ body: { email: invite.email, password }, headers: await headers() });
   await setSocietyCookie(invite.societyId);
-  redirect("/security?required=1");
+  // Members go to their portal; officers set up two-factor first.
+  redirect(invite.roles.every((r) => r === "member") ? "/my" : "/security?required=1");
 }
 
 /** Join the society with the account the person is already signed in to. */
@@ -69,5 +70,5 @@ export async function acceptAsSignedInOfficer(_prev: AcceptState, formData: Form
     return { ok: false, message: explain(e) };
   }
   await setSocietyCookie(invite.societyId);
-  redirect("/overview");
+  redirect(invite.roles.every((r) => r === "member") ? "/my" : "/overview");
 }

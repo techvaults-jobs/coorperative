@@ -1,5 +1,5 @@
 import { formatNaira } from "@techvaults/core";
-import { getMember, listContributions, listJournal, listLoans, listProducts, memberBalances } from "@techvaults/db";
+import { getMember, listContributions, listJournal, listLoans, listProducts, memberBalances, memberPortalStatus } from "@techvaults/db";
 import Link from "next/link";
 import { Briefcase, CalendarDays, Hash, Landmark, Mail, Phone, PiggyBank, ShieldCheck, Wallet } from "lucide-react";
 import { notFound } from "next/navigation";
@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { buttonClass } from "@/components/ui/button";
 import { LOAN_STATUS } from "@/lib/loan-status";
 import { ContributionsForm } from "./contributions-form";
+import { PortalInvite } from "./portal-invite";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat";
@@ -38,11 +39,12 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
       entries: canLedger ? await listJournal(tx, ws.actor, { memberId: id, limit: 200 }) : [],
       loans: showLoans ? await listLoans(tx, ws.actor, { memberId: id }) : [],
       contributions: showContributions ? await listContributions(tx, ws.actor, { memberId: id }) : [],
+      portal: hasPermission(ws, "members.write") || hasPermission(ws, "officers.manage") ? await memberPortalStatus(tx, ws.actor, id) : null,
       savingProducts: showContributions ? (await listProducts(tx, ws.actor)).filter((p) => p.kind !== "loan" && p.status === "active") : [],
     };
   });
   if (!data) notFound();
-  const { member, balances, entries, loans, contributions, savingProducts } = data;
+  const { member, balances, entries, loans, contributions, savingProducts, portal } = data;
   const status = MEMBER_STATUS[member.status];
   const details = [
     { icon: Hash, label: terms.externalId, value: member.staffId },
@@ -93,6 +95,27 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
             balances.map((b) => <StatCard key={b.code} label={b.name} icon={ICONS[b.code.slice(0, 2)]} value={formatNaira(b.balance)} />)
           )}
         </section>
+      )}
+
+      {portal && member.status === "active" && (
+        <Card>
+          <CardHeader
+            title="Member portal"
+            description={
+              portal.email
+                ? `Uses the portal as ${portal.email}: sees their own balances, statements and loans, and can apply for loans.`
+                : portal.invited
+                  ? `Invited as ${portal.invited.email}; the link expires ${portal.invited.expiresAt.toLocaleDateString("en-NG", { dateStyle: "medium" })}. Creating a new link replaces it.`
+                  : "Let the member see their own balances, statements and loans online, and apply for loans."
+            }
+          />
+          {!portal.email && (
+            <CardBody>
+              <PortalInvite memberId={member.id} defaultEmail={portal.invited?.email ?? member.email ?? ""} />
+            </CardBody>
+          )}
+          {portal.email && <div className="h-5" />}
+        </Card>
       )}
 
       {savingProducts.length > 0 && (

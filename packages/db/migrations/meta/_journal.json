@@ -78,6 +78,20 @@
       "when": 1792248252191,
       "tag": "0010_payroll_guardrails",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792249800233,
+      "tag": "0011_member_portal",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792249802262,
+      "tag": "0012_member_portal_guardrails",
+      "breakpoints": true
     }
   ]
 }

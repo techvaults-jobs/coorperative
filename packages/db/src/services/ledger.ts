@@ -20,6 +20,13 @@ export interface Actor {
   userId: string;
   societyId: string;
   roles: Role[];
+  /** Set when the person is also a member using the portal: the member record they are. */
+  memberId?: string | null;
+}
+
+/** True when the actor is the member in question, acting for themselves through the portal. */
+export function isSelf(actor: Actor, memberId: string): boolean {
+  return !!actor.memberId && actor.memberId === memberId && can(actor.roles, "self.read");
 }
 
 export class PermissionError extends Error {
@@ -468,7 +475,7 @@ export interface JournalView {
 
 /** Most recent journal entries with their lines, newest first. */
 export async function listJournal(tx: Tx, actor: Actor, opts: { limit?: number; offset?: number; memberId?: string } = {}): Promise<JournalView[]> {
-  if (!can(actor.roles, "ledger.read") && !opts.memberId) throw new PermissionError("Your role cannot view the ledger");
+  if (!can(actor.roles, "ledger.read") && !(opts.memberId && isSelf(actor, opts.memberId))) throw new PermissionError("Your role cannot view the ledger");
   const limit = Math.min(opts.limit ?? 50, 200);
   const entries = await tx.execute<{
     id: string;

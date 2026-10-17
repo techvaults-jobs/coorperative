@@ -5,7 +5,7 @@
 import { can, kobo, type Kobo } from "@techvaults/core";
 import { sql } from "drizzle-orm";
 import type { Tx } from "../client.js";
-import { PermissionError, type Actor } from "./ledger.js";
+import { isSelf, PermissionError, type Actor } from "./ledger.js";
 
 export interface MonthFlow {
   /** First day of the month, YYYY-MM-01. */
@@ -202,7 +202,9 @@ export interface MemberStatementAccount {
 
 /** A member's statement for a period: opening balance, every movement, closing balance, per account. */
 export async function memberStatement(tx: Tx, actor: Actor, memberId: string, from: string, to: string): Promise<MemberStatementAccount[]> {
-  if (!can(actor.roles, "ledger.read") || !can(actor.roles, "members.read")) throw new PermissionError("Your role cannot view member statements");
+  if (!(can(actor.roles, "ledger.read") && can(actor.roles, "members.read")) && !isSelf(actor, memberId)) {
+    throw new PermissionError("Your role cannot view member statements");
+  }
   const rows = await tx.execute<{
     code: string;
     name: string;
