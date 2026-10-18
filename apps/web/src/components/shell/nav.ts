@@ -36,7 +36,7 @@ export const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     label: "Administration",
     items: [
       { href: "/products", label: "Products", icon: Package, anyOf: ["settings.manage", "accounts.manage", "settings.approve"], keywords: "savings shares loan products rates policy" },
-      { href: "/officers", label: "Officers", icon: UserCog, anyOf: ["officers.manage"], keywords: "users roles invite" },
+      { href: "/officers", label: "Officers", icon: UserCog, anyOf: ["officers.manage", "settings.approve"], keywords: "users roles invite" },
       { href: "/audit", label: "Audit trail", icon: ShieldCheck, anyOf: ["audit.read"], keywords: "history log" },
       { href: "/settings", label: "Settings", icon: Settings, anyOf: ["settings.manage", "accounts.manage"], keywords: "society profile branding colour sector modules chart of accounts" },
     ],

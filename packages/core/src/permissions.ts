@@ -95,3 +95,18 @@ export interface SupportGrant {
 export function platformStaffCanRead(grant: SupportGrant | undefined, societyId: string, now: Date): boolean {
   return !!grant && grant.societyId === societyId && grant.scope === "read" && new Date(grant.expiresAt) > now;
 }
+
+/** Permissions that let someone approve others' work or change who can. */
+const SENSITIVE_PERMISSIONS: readonly Permission[] = ["ledger.approve", "loans.approve", "settings.approve", "officers.manage"];
+
+/** Roles that carry any approving or officer-managing permission; granting one needs a second officer. */
+export const SENSITIVE_ROLES = ROLES.filter((r) => GRANTS[r].some((p) => SENSITIVE_PERMISSIONS.includes(p)));
+
+export function isSensitiveGrant(newRoles: readonly Role[], currentRoles: readonly Role[] = []): boolean {
+  return newRoles.some((r) => SENSITIVE_ROLES.includes(r) && !currentRoles.includes(r));
+}
+
+/** Who may approve a sensitive role grant: someone who manages officers or approves settings. */
+export function canApproveRoleGrant(roles: readonly Role[]): boolean {
+  return can(roles, "officers.manage") || can(roles, "settings.approve");
+}

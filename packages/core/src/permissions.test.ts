@@ -49,3 +49,13 @@ describe("permissions", () => {
     expect(platformStaffCanRead(grant, "soc_1", new Date("2026-10-17T15:00:00Z"))).toBe(false);
   });
 });
+
+describe("sensitive role grants", () => {
+  it("treats approving and officer-managing roles as sensitive", async () => {
+    const { SENSITIVE_ROLES, isSensitiveGrant } = await import("./permissions.js");
+    expect([...SENSITIVE_ROLES].sort()).toEqual(["chairperson", "loan_committee", "principal_officer", "secretary"]);
+    expect(isSensitiveGrant(["treasurer", "auditor"])).toBe(false);
+    expect(isSensitiveGrant(["chairperson"])).toBe(true);
+    expect(isSensitiveGrant(["chairperson", "auditor"], ["chairperson"])).toBe(false); // keeping a role isn't a new grant
+  });
+});
