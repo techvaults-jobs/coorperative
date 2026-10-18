@@ -7,6 +7,8 @@ const nextConfig: NextConfig = {
   // Payroll remittance files are uploaded through a server action.
   experimental: { serverActions: { bodySizeLimit: "3mb" } },
   webpack(config) {
+    // Opt-in for machines short of disk space: skip webpack's persistent cache (hundreds of MB).
+    if (process.env.NEXT_NO_BUILD_CACHE) config.cache = false;
     // Workspace sources use NodeNext-style ".js" import specifiers for ".ts" files.
     config.resolve.extensionAlias = { ".js": [".ts", ".tsx", ".js"] };
     return config;

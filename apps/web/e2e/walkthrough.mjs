@@ -178,14 +178,15 @@ try {
   const prepare = async (description, amount) => {
     await page.goto(`${BASE}/ledger/new`, { waitUntil: "networkidle" });
     await page.fill("#description", description);
-    await page.selectOption("#debitAccountId", { label: "5200 · Stationery and printing" });
-    await page.selectOption("#creditAccountId", { label: "1100 · Bank – current account" });
-    await page.fill("#amount", amount);
+    await page.selectOption("#line-0-account", { label: "5200 · Stationery and printing" });
+    await page.fill("#line-0-debit", amount);
+    await page.selectOption("#line-1-account", { label: "1100 · Bank – current account" });
+    await page.fill("#line-1-credit", amount);
   };
   await prepare(`E2E stationery ${stamp}`, "3,450.75");
   // Simulate an impatient double submit before the first response arrives.
   await page.evaluate(() => {
-    const f = document.querySelector("form:has(#amount)");
+    const f = document.querySelector("form:has(#line-0-account)");
     f.requestSubmit();
     f.requestSubmit();
   });
@@ -197,13 +198,26 @@ try {
   check("journal says entries are waiting", (await page.getByText(/waiting for approval and not yet in the journal/).count()) === 1);
 
   await page.goto(`${BASE}/ledger/new`, { waitUntil: "networkidle" });
-  await page.selectOption("#debitAccountId", { label: "1100 · Bank – current account" });
-  await page.selectOption("#creditAccountId", { label: "2100 · Members' ordinary savings" });
-  await page.locator("#memberId").waitFor();
+  await page.selectOption("#line-0-account", { label: "1100 · Bank – current account" });
+  await page.selectOption("#line-1-account", { label: "2100 · Members' ordinary savings" });
+  await page.locator("#line-1-member").waitFor();
   check("member field appears for member accounts", true);
 
+  // A three-line entry: refused while it doesn't balance, accepted once it does.
   await prepare(`E2E wrong amount ${stamp}`, "99");
-  await page.click("form:has(#amount) button[type=submit]");
+  await page.fill("#line-1-credit", "90");
+  await page.getByRole("button", { name: "Add line" }).click();
+  await page.selectOption("#line-2-account", { label: "4100 · Entrance fees" });
+  check("an unbalanced entry shows how far out it is", (await page.getByText("Out by ₦9.00").count()) === 1);
+  await page.click("form:has(#line-0-account) button[type=submit]");
+  await page.getByText("Enter an amount on this line, or remove it.").waitFor({ timeout: 10000 });
+  await page.fill("#line-2-credit", "5");
+  await page.click("form:has(#line-0-account) button[type=submit]");
+  await page.getByText("Debits and credits must be equal").waitFor({ timeout: 10000 });
+  check("an unbalanced entry is refused", true);
+  await page.fill("#line-2-credit", "9");
+  await page.getByText("✓ Balanced").waitFor();
+  await page.click("form:has(#line-0-account) button[type=submit]");
   await page.getByText("Submitted for approval").waitFor({ timeout: 10000 });
 
   await page.goto(`${BASE}/approvals`, { waitUntil: "networkidle" });
