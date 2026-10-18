@@ -30,6 +30,7 @@ import {
 } from "./services/ledger.js";
 import { createMember, listMembers, updateMember } from "./services/members.js";
 import { createSociety, listPlatformSocieties } from "./services/platform.js";
+import { decideWithdrawal, listWithdrawals, payWithdrawal, requestWithdrawal } from "./services/withdrawals.js";
 import { importMembers, previewMemberImport, previewOpeningBalances, submitOpeningBalances } from "./services/importing.js";
 import { financialPosition, incomeStatement, memberCounts, memberStatement, monthlyFlows } from "./services/reports.js";
 import { createAccount, getSocietySettings, setAccountActive, updateSocietySettings } from "./services/settings.js";
@@ -798,5 +799,30 @@ describe.runIf(ADMIN)("database guardrails", () => {
     expect(balances.map((b) => [b.code, b.balance])).toEqual([["2100", parseNaira("50000")], ["3100", parseNaira("10000")]]);
     const tb = await withSociety(app.db, ids.socA, (tx) => trialBalance(tx));
     expect(tb.find((r) => r.code === "3900")!.balance).toBe(kobo(-parseNaira("85000.50")));
+  });
+
+  it("pays a savings withdrawal after the notice period, with two officers", async () => {
+    const committee = actor(["chairperson"], ids.chair);
+    const ngozi = (await withSociety(app.db, ids.socA, (tx) => listMembers(tx, actor(["secretary"])))).find((m) => m.memberNo === "IMP-01")!;
+    const [savings] = await withSociety(app.db, ids.socA, (tx) => listProducts(tx, treasurer(), { kind: "savings" }));
+    const id = await withSociety(app.db, ids.socA, (tx) =>
+      requestWithdrawal(tx, treasurer(), { memberId: ngozi.id, productId: savings!.id, amount: parseNaira("40000"), reason: "School fees", requestedOn: "2026-10-18" }),
+    );
+    // ₦50,000 balance, ₦40,000 already requested: another ₦15,000 is too much.
+    await expect(
+      withSociety(app.db, ids.socA, (tx) => requestWithdrawal(tx, treasurer(), { memberId: ngozi.id, productId: savings!.id, amount: parseNaira("15000"), requestedOn: "2026-10-18" })),
+    ).rejects.toThrow(/available balance/);
+    await expect(withSociety(app.db, ids.socA, (tx) => decideWithdrawal(tx, actor(["treasurer", "chairperson"]), id, "approve", ""))).rejects.toThrow(/recorded this request/);
+    await withSociety(app.db, ids.socA, (tx) => decideWithdrawal(tx, committee, id, "approve", ""));
+    const [w] = await withSociety(app.db, ids.socA, (tx) => listWithdrawals(tx, treasurer(), { memberId: ngozi.id }));
+    expect(w).toMatchObject({ status: "approved", earliestPayment: "2026-11-17" }); // 30 days' notice
+    await expect(withSociety(app.db, ids.socA, (tx) => payWithdrawal(tx, treasurer(), id, { bankAccountId: ids.bank, paidOn: "2026-11-01", idempotencyKey: "wd-early" }))).rejects.toThrow(/notice period/);
+    const submissionId = await withSociety(app.db, ids.socA, (tx) => payWithdrawal(tx, treasurer(), id, { bankAccountId: ids.bank, paidOn: "2026-11-17", idempotencyKey: "wd-1" }));
+    let balances = await withSociety(app.db, ids.socA, (tx) => memberBalances(tx, ngozi.id));
+    expect(balances.find((b) => b.code === "2100")!.balance).toBe(parseNaira("50000")); // not until approved
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, committee, submissionId));
+    balances = await withSociety(app.db, ids.socA, (tx) => memberBalances(tx, ngozi.id));
+    expect(balances.find((b) => b.code === "2100")!.balance).toBe(parseNaira("10000"));
+    expect((await withSociety(app.db, ids.socA, (tx) => listWithdrawals(tx, treasurer(), { memberId: ngozi.id })))[0]!.status).toBe("paid");
   });
 });

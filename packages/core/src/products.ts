@@ -48,3 +48,51 @@ export function validateSharesPolicy(p: SharesPolicy): string[] {
 
 export const DEFAULT_SAVINGS_POLICY: SavingsPolicy = { minimumContribution: kobo(500_000), withdrawalNoticeDays: 30, withdrawable: true };
 export const DEFAULT_SHARES_POLICY: SharesPolicy = { sharePrice: kobo(100_000), minimumShares: 5 };
+
+// ---------------------------------------------------------------------------
+// Withdrawals
+
+export interface WithdrawalCheck {
+  key: "status" | "allowed" | "amount" | "balance";
+  label: string;
+  ok: boolean;
+  detail: string;
+}
+
+const nairaText = (k: bigint) => `₦${(Number(k) / 100).toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/**
+ * Whether a member may withdraw `amount` from a savings product under its approved policy.
+ * `pending` is what's already requested or approved but not yet paid.
+ */
+export function checkWithdrawal(
+  policy: SavingsPolicy,
+  input: { memberStatus: string; balance: Kobo; pending: Kobo; amount: Kobo },
+): { allowed: boolean; checks: WithdrawalCheck[] } {
+  const leaving = input.memberStatus === "exiting";
+  const available = input.balance - input.pending;
+  const checks: WithdrawalCheck[] = [
+    { key: "status", label: "Member is active or leaving", ok: input.memberStatus === "active" || leaving, detail: `Status: ${input.memberStatus}` },
+    {
+      key: "allowed",
+      label: policy.withdrawable ? "This product allows withdrawals" : "Withdrawals only when leaving the society",
+      ok: policy.withdrawable || leaving,
+      detail: policy.withdrawable ? "Allowed while a member" : leaving ? "Member is leaving" : "Member isn't leaving",
+    },
+    { key: "amount", label: "More than ₦0", ok: input.amount > 0n, detail: `Requested ${nairaText(input.amount)}` },
+    {
+      key: "balance",
+      label: "Within the available balance",
+      ok: input.amount <= available,
+      detail: `Balance ${nairaText(input.balance)}${input.pending > 0n ? `, ${nairaText(input.pending)} already requested` : ""}`,
+    },
+  ];
+  return { allowed: checks.every((c) => c.ok), checks };
+}
+
+/** The earliest date a withdrawal requested on `requestedOn` may be paid, after the notice period. */
+export function earliestPayment(requestedOn: string, noticeDays: number): string {
+  const d = new Date(`${requestedOn}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + noticeDays);
+  return d.toISOString().slice(0, 10);
+}

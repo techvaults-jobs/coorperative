@@ -34,6 +34,7 @@ export const productStatus = pgEnum("product_status", ["proposed", "active", "re
 export const loanStatus = pgEnum("loan_status", ["applied", "approved", "rejected", "withdrawn", "disbursing", "active", "closed"]);
 export const payrollStatus = pgEnum("payroll_status", ["draft", "issued", "reconciled", "submitted", "posted"]);
 export const payrollItemKind = pgEnum("payroll_item_kind", ["loan", "savings", "shares"]);
+export const withdrawalStatus = pgEnum("withdrawal_status", ["requested", "approved", "rejected", "cancelled", "paying", "paid"]);
 export const submissionStatus = pgEnum("submission_status", ["pending", "approved", "rejected", "withdrawn"]);
 
 export const societies = pgTable("societies", {
@@ -557,4 +558,36 @@ export const outboundMessages = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("outbound_messages_created").on(t.createdAt), check("outbound_messages_status", sql`${t.status} in ('sent', 'logged', 'failed')`)],
+);
+
+/** A member's request to take money out of a savings product, from request to payment. */
+export const withdrawals = pgTable(
+  "withdrawals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    societyId: uuid("society_id").notNull(),
+    memberId: uuid("member_id").notNull(),
+    productId: uuid("product_id").notNull(),
+    amount: bigint("amount", { mode: "bigint" }).notNull(),
+    reason: text("reason"),
+    requestedOn: date("requested_on").notNull(),
+    /** After the product's notice period. */
+    earliestPayment: date("earliest_payment").notNull(),
+    status: withdrawalStatus("status").notNull().default("requested"),
+    requestedBy: uuid("requested_by").notNull().references(() => users.id),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedBy: uuid("decided_by").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decisionReason: text("decision_reason"),
+    paymentSubmissionId: uuid("payment_submission_id"),
+  },
+  (t) => [
+    unique("withdrawals_society_id_id").on(t.societyId, t.id),
+    foreignKey({ columns: [t.societyId, t.memberId], foreignColumns: [members.societyId, members.id] }),
+    foreignKey({ columns: [t.societyId, t.productId], foreignColumns: [products.societyId, products.id] }),
+    foreignKey({ columns: [t.societyId, t.paymentSubmissionId], foreignColumns: [journalSubmissions.societyId, journalSubmissions.id] }),
+    index("withdrawals_society_status").on(t.societyId, t.status),
+    check("withdrawals_amount_positive", sql`${t.amount} > 0`),
+    check("withdrawals_separation_of_duties", sql`${t.status} not in ('approved', 'rejected', 'paying', 'paid') or ${t.decidedBy} <> ${t.requestedBy}`),
+  ],
 );

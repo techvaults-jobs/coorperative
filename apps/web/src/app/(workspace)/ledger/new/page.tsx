@@ -19,9 +19,9 @@ export default async function PrepareEntryPage() {
       <PageHeader
         back={{ href: "/ledger", label: "Journal" }}
         title="Prepare an entry"
-        description="A two-line entry: one account debited, one credited, the same amount. Another officer approves it before it reaches the journal."
+        description="Add as many lines as the entry needs; debits must equal credits. Another officer approves it before it reaches the journal."
       />
-      <Card className="max-w-2xl">
+      <Card className="max-w-4xl">
         <CardHeader title="Entry details" />
         <CardBody>
           <PostEntryForm

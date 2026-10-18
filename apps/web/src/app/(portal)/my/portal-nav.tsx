@@ -1,11 +1,11 @@
 "use client";
 
-import { FileText, HandCoins, Home } from "lucide-react";
+import { Banknote, FileText, HandCoins, Home } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/components/ui/cn";
 
-const ICONS = { home: Home, statement: FileText, loan: HandCoins };
+const ICONS = { home: Home, statement: FileText, loan: HandCoins, withdraw: Banknote };
 
 export function PortalNav({ links }: { links: { href: string; label: string; icon: keyof typeof ICONS }[] }) {
   const pathname = usePathname();

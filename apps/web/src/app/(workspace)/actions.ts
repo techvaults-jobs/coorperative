@@ -77,59 +77,63 @@ export async function addMember(_prev: FormState, formData: FormData): Promise<F
   return { ok: true, message: `${input.fullName} was added as member ${input.memberNo}.` };
 }
 
+/** Prepare a journal entry of any number of lines; another officer approves it. */
 export async function submitEntry(_prev: FormState, formData: FormData): Promise<FormState> {
   const ws = await requireWorkspace();
   const entryDate = text(formData, "entryDate");
   const description = text(formData, "description");
-  const debitAccountId = text(formData, "debitAccountId");
-  const creditAccountId = text(formData, "creditAccountId");
-  const memberId = text(formData, "memberId");
   const idempotencyKey = text(formData, "idempotencyKey");
+  const all = (k: string) => formData.getAll(k).map((v) => String(v).trim());
+  const [accountIds, memberIds, debits, credits] = [all("accountId"), all("memberId"), all("debit"), all("credit")];
   const fieldErrors: Record<string, string> = {};
-  let amount;
-  try {
-    amount = parseNaira(text(formData, "amount"));
-    if (amount <= 0n) fieldErrors.amount = "Enter an amount greater than zero.";
-  } catch {
-    fieldErrors.amount = "Enter an amount like 15000 or 15,000.50.";
-  }
   if (!DATE.test(entryDate)) fieldErrors.entryDate = "Choose the accounting date.";
   if (description.length < 4) fieldErrors.description = "Describe what this entry is for.";
-  if (!debitAccountId) fieldErrors.debitAccountId = "Choose the account to debit.";
-  if (!creditAccountId) fieldErrors.creditAccountId = "Choose the account to credit.";
-  if (debitAccountId && debitAccountId === creditAccountId) fieldErrors.creditAccountId = "Debit and credit must be different accounts.";
-  if (Object.keys(fieldErrors).length || !amount) return { ok: false, fieldErrors };
+
+  const money = (raw: string) => {
+    if (!raw) return 0n;
+    try {
+      return parseNaira(raw);
+    } catch {
+      return null;
+    }
+  };
+  const lines: { index: number; accountId: string; memberId: string; side: "debit" | "credit"; amount: bigint }[] = [];
+  accountIds.forEach((accountId, i) => {
+    const d = money(debits[i] ?? "");
+    const c = money(credits[i] ?? "");
+    if (!accountId && !d && !c) return; // an empty row
+    if (d === null || c === null || (d ?? 0n) < 0n || (c ?? 0n) < 0n) return void (fieldErrors[`line-${i}`] = "Enter amounts like 15000 or 15,000.50.");
+    if (!accountId) return void (fieldErrors[`line-${i}`] = "Choose an account.");
+    if (d === 0n && c === 0n) return void (fieldErrors[`line-${i}`] = "Enter an amount on this line, or remove it.");
+    if (d > 0n && c > 0n) return void (fieldErrors[`line-${i}`] = "Enter a debit or a credit, not both.");
+    lines.push({ index: i, accountId, memberId: memberIds[i] ?? "", side: d > 0n ? "debit" : "credit", amount: d > 0n ? d : c });
+  });
+  const debitTotal = lines.filter((l) => l.side === "debit").reduce((s, l) => s + l.amount, 0n);
+  const creditTotal = lines.filter((l) => l.side === "credit").reduce((s, l) => s + l.amount, 0n);
+  if (!Object.keys(fieldErrors).some((k) => k.startsWith("line-"))) {
+    if (lines.length < 2) fieldErrors.lines = "An entry needs at least two lines.";
+    else if (debitTotal !== creditTotal) fieldErrors.lines = "Debits and credits must be equal before the entry can be submitted.";
+  }
+  if (Object.keys(fieldErrors).length) return { ok: false, fieldErrors };
 
   try {
     const result = await inSociety(ws, async (tx) => {
-      const accounts = await listAccounts(tx, ws.actor);
-      const byId = new Map(accounts.map((a) => [a.id, a]));
-      const debit = byId.get(debitAccountId);
-      const credit = byId.get(creditAccountId);
-      if (!debit || !credit) throw new LedgerError("UNBALANCED", "Choose accounts from the list.");
-      if ((debit.isMemberControl || credit.isMemberControl) && !memberId) {
-        throw new LedgerError("UNBALANCED", "This entry touches a member account, so choose the member.");
-      }
-      const line = (accountId: string, side: "debit" | "credit", control: boolean): JournalLine => ({
-        accountId,
-        side,
-        amount: amount!,
-        ...(control ? { memberId } : {}),
+      const accounts = new Map((await listAccounts(tx, ws.actor)).map((a) => [a.id, a]));
+      const journalLines: JournalLine[] = lines.map((l) => {
+        const account = accounts.get(l.accountId);
+        if (!account) throw new LedgerError("UNBALANCED", "Choose accounts from the list.");
+        if (account.isMemberControl && !l.memberId) throw new LedgerError("UNBALANCED", `Choose the member for ${account.code} ${account.name}.`);
+        return { accountId: l.accountId, side: l.side, amount: l.amount as JournalLine["amount"], ...(account.isMemberControl ? { memberId: l.memberId } : {}) };
       });
-      return submitJournalEntry(tx, ws.actor, {
-        entryDate,
-        description,
-        idempotencyKey,
-        lines: [line(debit.id, "debit", debit.isMemberControl), line(credit.id, "credit", credit.isMemberControl)],
-      });
+      return submitJournalEntry(tx, ws.actor, { entryDate, description, idempotencyKey, lines: journalLines });
     });
+    // A fresh page means a fresh idempotency key for the next entry.
+    revalidatePath("/ledger/new");
     revalidatePath("/ledger");
     revalidatePath("/approvals");
     return {
       ok: true,
-      message: result.created
-        ? "Submitted for approval. It will be posted when another officer approves it."
-        : "Already submitted; nothing was duplicated.",
+      message: result.created ? "Submitted for approval. It will be posted when another officer approves it." : "Already submitted; nothing was duplicated.",
     };
   } catch (e) {
     return { ok: false, message: describe(e) };

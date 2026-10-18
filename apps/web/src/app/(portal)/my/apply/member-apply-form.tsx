@@ -2,6 +2,7 @@
 
 import { formatNaira, kobo } from "@techvaults/core/browser";
 import { CheckCircle2, XCircle } from "lucide-react";
+import { submitWithoutReset } from "@/lib/use-form-action";
 import { useActionState, useEffect, useState, useTransition } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -33,7 +34,7 @@ export function MemberApplyForm({ products }: { products: Product[] }) {
   }, [productId, amount, term, guarantorNos]);
 
   return (
-    <form action={action} className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+    <form method="post" onSubmit={submitWithoutReset(action)} className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
       <div className="flex min-w-0 flex-col gap-6">
         <Card>
           <CardHeader title="Your request" />

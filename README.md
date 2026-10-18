@@ -28,7 +28,7 @@ TEST_PG_URL=postgres://postgres@localhost:5432/postgres pnpm --filter @techvault
 DATABASE_ADMIN_URL=... APP_DB_PASSWORD=... pnpm --filter @techvaults/db db:migrate
 SEED_ADMIN_EMAIL=... SEED_ADMIN_PASSWORD=... DATABASE_ADMIN_URL=... pnpm --filter @techvaults/web seed
 DATABASE_URL=postgres://coop_app:...@.../db BETTER_AUTH_SECRET=... BETTER_AUTH_URL=http://localhost:3000 pnpm dev
-BASE=http://localhost:3000 EMAIL=... PASSWORD=... pnpm --filter @techvaults/web e2e   # browser walkthrough on a fresh seed (63 checks)
+BASE=http://localhost:3000 EMAIL=... PASSWORD=... pnpm --filter @techvaults/web e2e   # browser walkthrough on a fresh seed (67 checks)
 ```
 
 ## Deploy (Railway)
