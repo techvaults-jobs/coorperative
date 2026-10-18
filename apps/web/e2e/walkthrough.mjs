@@ -155,6 +155,13 @@ try {
   await page.getByRole("button", { name: "Import members" }).click();
   await page.getByText("2 members added to the register.").waitFor({ timeout: 15000 });
   check("a member register imports from a spreadsheet", true);
+  await page.goto(`${BASE}/members/import?tab=loans`, { waitUntil: "networkidle" });
+  await page.fill("#loans-csv", `Member no,Product code,Outstanding,Remaining months,Next due date\nIMP-${stamp}-1,REG-LOAN,24000,6,30/11/2026`);
+  await page.getByRole("button", { name: "Check file" }).click();
+  await page.getByText("1 loans,").waitFor({ timeout: 10000 });
+  await page.getByRole("button", { name: "Bring loans across" }).click();
+  await page.getByText(/running loans .* prepared/).waitFor({ timeout: 15000 });
+  check("a running loan is brought across for approval", true);
 
   await page.goto(`${BASE}/members?q=Chiamaka`, { waitUntil: "networkidle" });
   await page.click("text=Chiamaka Eze");
@@ -346,6 +353,8 @@ try {
   check("reports download as CSV", positionCsv.ok() && (await positionCsv.text()).includes("Accumulated surplus"));
   await page.goto(`${BASE}/reports/income?from=2026-01-01&to=2026-12-31`, { waitUntil: "networkidle" });
   check("income statement shows the statutory reserve", (await page.getByText("Statutory reserve, 25% of surplus (Act s.34)").count()) === 1);
+  await page.goto(`${BASE}/reports/year-end`, { waitUntil: "networkidle" });
+  check("the year-end close page previews the reserve transfer", (await page.getByText("25% to the statutory reserve fund (Act s.34)").count()) === 1);
   await page.goto(`${BASE}/members?q=Chiamaka`, { waitUntil: "networkidle" });
   await page.click("text=Chiamaka Eze");
   await page.getByRole("link", { name: "Statement" }).click();

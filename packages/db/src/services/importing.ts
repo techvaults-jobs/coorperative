@@ -2,11 +2,11 @@
  * Bringing a society's existing records across: the member register and opening balances.
  * A preview shows every problem first; the import is all-or-nothing.
  */
-import { can, kobo, resolveTerminology, type Terminology, parseMembersCsv, parseOpeningBalancesCsv, type ImportIssue, type JournalLine, type Kobo, type MemberRow } from "@techvaults/core";
-import { eq } from "drizzle-orm";
+import { buildSchedule, can, kobo, loadLoanPolicy, parseLegacyLoansCsv, resolveTerminology, type StoredLoanPolicy, type Terminology, parseMembersCsv, parseOpeningBalancesCsv, type ImportIssue, type JournalLine, type Kobo, type MemberRow } from "@techvaults/core";
+import { eq, inArray, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import type { Tx } from "../client.js";
-import { ledgerAccounts, members, societies } from "../schema.js";
+import { journalSubmissions, ledgerAccounts, loans, members, products, societies } from "../schema.js";
 import { recordAudit } from "./audit.js";
 import { PermissionError, submitJournalEntry, type Actor, type Submission } from "./ledger.js";
 import { createMember } from "./members.js";
@@ -150,4 +150,107 @@ export async function submitOpeningBalances(tx: Tx, actor: Actor, csv: string, a
   const key = `opening:${createHash("sha256").update(`${asOf}\n${csv}`).digest("hex").slice(0, 32)}`;
   const submission = await submitJournalEntry(tx, actor, { entryDate: asOf, description: `Members' opening balances as at ${asOf}`, idempotencyKey: key, lines });
   return { ...submission, members: preview.lines.length, total: preview.total };
+}
+
+// ---------------------------------------------------------------------------
+// Running loans brought across
+
+export interface LegacyLoanPreview {
+  loans: { line: number; memberNo: string; memberName: string; productCode: string; outstanding: Kobo; remainingMonths: number; nextDue: string; monthlyPayment: Kobo }[];
+  total: Kobo;
+  issues: ImportIssue[];
+}
+
+/** Check loans to bring across: members and products must exist, and the next due date must be after the date. */
+export async function previewLegacyLoans(tx: Tx, actor: Actor, csv: string, asOf: string): Promise<LegacyLoanPreview> {
+  if (!can(actor.roles, "ledger.prepare") || !can(actor.roles, "loans.prepare")) throw new PermissionError("Your role cannot bring loans across");
+  const parsed = parseLegacyLoansCsv(csv);
+  const issues = [...parsed.issues];
+  const people = await tx.select().from(members).where(eq(members.societyId, actor.societyId));
+  const byNo = new Map(people.map((p) => [p.memberNo.toUpperCase(), p]));
+  const prods = await tx.select().from(products).where(eq(products.societyId, actor.societyId));
+  const byCode = new Map(prods.map((p) => [p.code, p]));
+  const out: LegacyLoanPreview["loans"] = [];
+  for (const r of parsed.rows) {
+    const m = byNo.get(r.memberNo.toUpperCase());
+    const p = byCode.get(r.productCode);
+    const problems = [
+      !m && `member no ${r.memberNo} isn't on the register`,
+      m && m.status !== "active" && `member ${r.memberNo} isn't active`,
+      (!p || p.kind !== "loan") && `there's no loan product ${r.productCode}`,
+      p && p.kind === "loan" && (p.status !== "active" || !p.policy) && `loan product ${r.productCode} isn't approved`,
+      r.nextDue <= asOf && `next due date ${r.nextDue} must be after ${asOf}`,
+    ].filter((x): x is string => !!x);
+    if (problems.length) {
+      issues.push({ line: r.line, message: problems.join("; ") });
+      continue;
+    }
+    const policy = loadLoanPolicy(p!.policy as unknown as StoredLoanPolicy);
+    const schedule = buildSchedule(r.outstanding, r.remainingMonths, policy.interestMethod, policy.annualRateBps, r.nextDue);
+    out.push({ line: r.line, memberNo: m!.memberNo, memberName: m!.fullName, productCode: r.productCode, outstanding: r.outstanding, remainingMonths: r.remainingMonths, nextDue: r.nextDue, monthlyPayment: schedule.instalments[0]!.payment });
+  }
+  return { loans: out, total: kobo(out.reduce((s, l) => s + l.outstanding, 0n)), issues: issues.sort((a, b) => a.line - b.line) };
+}
+
+/**
+ * Bring running loans across: each becomes a loan on its product (remaining balance over the
+ * remaining months, under the product's approved terms), and one journal entry against 3900
+ * Opening balances carries the balances. The loans go live when another officer approves it.
+ */
+export async function submitLegacyLoans(tx: Tx, actor: Actor, csv: string, asOf: string): Promise<{ submissionId: string; loans: number; total: Kobo }> {
+  const preview = await previewLegacyLoans(tx, actor, csv, asOf);
+  if (preview.issues.length) throw new ImportError(`Fix ${preview.issues.length} problem${preview.issues.length === 1 ? "" : "s"} first; nothing was brought across.`);
+  if (preview.loans.length === 0) throw new ImportError("The file has no loans to bring across.");
+  const key = `legacy-loans:${createHash("sha256").update(`${asOf}\n${csv}`).digest("hex").slice(0, 32)}`;
+  const [already] = await tx.select({ id: journalSubmissions.id }).from(journalSubmissions).where(eq(journalSubmissions.idempotencyKey, key));
+  if (already) throw new ImportError("This file has already been brought across.");
+
+  const accounts = await tx.select().from(ledgerAccounts).where(eq(ledgerAccounts.societyId, actor.societyId));
+  let opening = accounts.find((a) => a.code === OPENING_BALANCE_CODE);
+  if (!opening) {
+    [opening] = await tx.insert(ledgerAccounts).values({ societyId: actor.societyId, code: OPENING_BALANCE_CODE, name: "Opening balances", class: "equity" }).returning();
+  }
+  const prods = new Map((await tx.select().from(products).where(eq(products.societyId, actor.societyId))).map((p) => [p.code, p]));
+  const people = new Map((await tx.select().from(members).where(eq(members.societyId, actor.societyId))).map((p) => [p.memberNo, p]));
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`loans:${actor.societyId}`}, 0))`);
+  const [{ next }] = (await tx.execute<{ next: number }>(sql`select coalesce(max(loan_no), 0) + 1 as next from loans where society_id = ${actor.societyId}`)) as unknown as [{ next: number }];
+  const created: { id: string; memberId: string; accountId: string; amount: Kobo }[] = [];
+  for (const [i, l] of preview.loans.entries()) {
+    const p = prods.get(l.productCode)!;
+    const m = people.get(l.memberNo)!;
+    const [row] = await tx
+      .insert(loans)
+      .values({
+        societyId: actor.societyId,
+        loanNo: Number(next) + i,
+        memberId: m.id,
+        productId: p.id,
+        amount: l.outstanding,
+        termMonths: l.remainingMonths,
+        purpose: "Brought across from previous records",
+        policy: p.policy!,
+        policyVersion: p.version,
+        status: "disbursing",
+        appliedBy: actor.userId,
+        disbursedOn: asOf,
+        firstDueDate: l.nextDue,
+      })
+      .returning({ id: loans.id });
+    created.push({ id: row!.id, memberId: m.id, accountId: p.accountId, amount: l.outstanding });
+  }
+  const lines: JournalLine[] = [
+    ...created.map((c) => ({ accountId: c.accountId, side: "debit" as const, amount: c.amount, memberId: c.memberId, loanId: c.id, memo: "Loan brought across" })),
+    { accountId: opening!.id, side: "credit", amount: preview.total, memo: "Members' loans brought across" },
+  ];
+  const submission = await submitJournalEntry(tx, actor, { entryDate: asOf, description: `Running loans brought across as at ${asOf}`, idempotencyKey: key, lines });
+  await tx.update(loans).set({ disbursementSubmissionId: submission.id }).where(inArray(loans.id, created.map((c) => c.id)));
+  await recordAudit(tx, {
+    societyId: actor.societyId,
+    actorId: actor.userId,
+    action: "loans.brought_across",
+    entityType: "society",
+    entityId: actor.societyId,
+    after: { loans: created.length, total: preview.total, submissionId: submission.id },
+  });
+  return { submissionId: submission.id, loans: created.length, total: preview.total };
 }

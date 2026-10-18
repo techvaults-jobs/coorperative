@@ -30,8 +30,9 @@ import {
 } from "./services/ledger.js";
 import { createMember, listMembers, updateMember } from "./services/members.js";
 import { createSociety, listPlatformSocieties } from "./services/platform.js";
+import { lastCompletedYear, previewYearEnd, submitYearEnd } from "./services/yearend.js";
 import { decideWithdrawal, listWithdrawals, payWithdrawal, requestWithdrawal } from "./services/withdrawals.js";
-import { importMembers, previewMemberImport, previewOpeningBalances, submitOpeningBalances } from "./services/importing.js";
+import { importMembers, previewLegacyLoans, previewMemberImport, previewOpeningBalances, submitLegacyLoans, submitOpeningBalances } from "./services/importing.js";
 import { financialPosition, incomeStatement, memberCounts, memberStatement, monthlyFlows } from "./services/reports.js";
 import { createAccount, getSocietySettings, setAccountActive, updateSocietySettings } from "./services/settings.js";
 import { approveProductPolicy, listProducts, proposePolicyChange, proposeProduct } from "./services/products.js";
@@ -824,5 +825,54 @@ describe.runIf(ADMIN)("database guardrails", () => {
     balances = await withSociety(app.db, ids.socA, (tx) => memberBalances(tx, ngozi.id));
     expect(balances.find((b) => b.code === "2100")!.balance).toBe(parseNaira("10000"));
     expect((await withSociety(app.db, ids.socA, (tx) => listWithdrawals(tx, treasurer(), { memberId: ngozi.id })))[0]!.status).toBe("paid");
+  });
+
+  it("brings running loans across, live only once a second officer approves", async () => {
+    const csv = "Member no,Product code,Outstanding,Remaining months,Next due date\nIMP-02,REG-LOAN,12000,4,30/11/2026\nNOPE,REG-LOAN,1,1,30/11/2026\n";
+    const p1 = await withSociety(app.db, ids.socA, (tx) => previewLegacyLoans(tx, treasurer(), csv, "2026-10-31"));
+    expect(p1.issues).toEqual([{ line: 3, message: "member no NOPE isn't on the register" }]);
+    const good = csv.split("\n").filter((l) => !l.startsWith("NOPE")).join("\n");
+    const p2 = await withSociety(app.db, ids.socA, (tx) => previewLegacyLoans(tx, treasurer(), good, "2026-10-31"));
+    expect(p2.loans[0]).toMatchObject({ memberNo: "IMP-02", outstanding: parseNaira("12000"), remainingMonths: 4 });
+    expect(p2.loans[0]!.monthlyPayment > parseNaira("3000")).toBe(true);
+    const r = await withSociety(app.db, ids.socA, (tx) => submitLegacyLoans(tx, treasurer(), good, "2026-10-31"));
+    await expect(withSociety(app.db, ids.socA, (tx) => submitLegacyLoans(tx, treasurer(), good, "2026-10-31"))).rejects.toThrow(/already been brought across/);
+    const sule = (await withSociety(app.db, ids.socA, (tx) => listMembers(tx, actor(["secretary"])))).find((m) => m.memberNo === "IMP-02")!;
+    let [loan] = await withSociety(app.db, ids.socA, (tx) => listLoans(tx, treasurer(), { memberId: sule.id }));
+    expect(loan!.status).toBe("disbursing");
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, actor(["chairperson"], ids.chair), r.submissionId));
+    const detail = (await withSociety(app.db, ids.socA, (tx) => getLoan(tx, treasurer(), loan!.id)))!;
+    expect(detail.status).toBe("active");
+    expect(detail.position.principalOutstanding).toBe(parseNaira("12000"));
+    expect(detail.position.nextDue?.dueDate).toBe("2026-11-30");
+  });
+
+  it("closes a year into reserves and locks it", async () => {
+    const committee = actor(["chairperson"], ids.chair);
+    const year = lastCompletedYear("2027-01-15", 1);
+    expect(year).toEqual({ start: "2026-01-01", end: "2026-12-31" });
+    expect(lastCompletedYear("2027-08-01", 7)).toEqual({ start: "2026-07-01", end: "2027-06-30" });
+    const before = await withSociety(app.db, ids.socA, (tx) => incomeStatement(tx, treasurer(), year.start, year.end));
+    const preview = await withSociety(app.db, ids.socA, (tx) => previewYearEnd(tx, treasurer(), year));
+    expect(preview.surplus).toBe(before.totals.surplus);
+    expect(preview.statutoryReserve).toBe(before.statutoryReserve);
+    const reserveBefore = (await withSociety(app.db, ids.socA, (tx) => trialBalance(tx))).find((r) => r.code === "3200")?.balance ?? 0n;
+    const { submissionId } = await withSociety(app.db, ids.socA, (tx) => submitYearEnd(tx, treasurer(), year));
+    await expect(withSociety(app.db, ids.socA, (tx) => submitYearEnd(tx, treasurer(), year))).rejects.toThrow(/waiting for approval/);
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, committee, submissionId));
+    const tb = await withSociety(app.db, ids.socA, (tx) => trialBalance(tx));
+    // 2026's income and expenses are closed; reserves and accumulated surplus carry the result.
+    const yearEnd2026 = await withSociety(app.db, ids.socA, (tx) => previewYearEnd(tx, treasurer(), year));
+    expect(yearEnd2026.status).toBe("closed");
+    expect(tb.find((r) => r.code === "3200")!.balance).toBe(kobo(reserveBefore + preview.statutoryReserve));
+    expect(tb.find((r) => r.code === "3400")!.balance).toBe(kobo(preview.surplus - preview.statutoryReserve));
+    expect(tb.reduce((s, r) => s + r.debit, 0n)).toBe(tb.reduce((s, r) => s + r.credit, 0n));
+    // The year's own report is unchanged by the closing entry.
+    const after = await withSociety(app.db, ids.socA, (tx) => incomeStatement(tx, treasurer(), year.start, year.end));
+    expect(after.totals.surplus).toBe(before.totals.surplus);
+    // Nothing more can be dated in the closed year (the database trigger enforces the same rule).
+    await expect(withSociety(app.db, ids.socA, (tx) => submitJournalEntry(tx, treasurer(), { ...fee("late-2026"), entryDate: "2026-12-15" }))).rejects.toThrow(/books are closed up to 2026-12-31/);
+    const s = await withSociety(app.db, ids.socA, (tx) => submitJournalEntry(tx, treasurer(), { ...fee("early-2027"), entryDate: "2027-01-02" }));
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, committee, s.id));
   });
 });
