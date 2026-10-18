@@ -27,10 +27,11 @@ import Link from "next/link";
 import { COMPANY, Logo, PRODUCT } from "@/components/brand";
 import { DemoForm } from "@/components/marketing/demo-form";
 import { Faq } from "@/components/marketing/faq";
+import { ProductTour } from "@/components/marketing/product-tour";
+import { Reveal } from "@/components/marketing/reveal";
 import { buttonClass } from "@/components/ui/button";
 import { cn } from "@/components/ui/cn";
 import { checkHealth } from "@/lib/health";
-import dashboardShot from "../../public/marketing/dashboard.jpg";
 import loanShot from "../../public/marketing/loan.jpg";
 import payrollShot from "../../public/marketing/payroll.jpg";
 import portalShot from "../../public/marketing/portal.jpg";
@@ -251,18 +252,9 @@ export default async function Home() {
             </ul>
           </div>
           <div className="relative mx-auto max-w-6xl px-4 pb-20 sm:px-6">
-            <BrowserFrame>
-              <Image src={dashboardShot} alt="The Cooperative Vaults dashboard: members, savings, share capital, loans and monthly contributions" priority sizes="(min-width: 1200px) 1150px, 100vw" />
-            </BrowserFrame>
-            <div className="border-border bg-surface absolute -bottom-2 left-8 hidden items-center gap-3 rounded-xl border px-4 py-3 shadow-lg md:flex">
-              <span className="bg-success-soft text-success flex size-9 items-center justify-center rounded-lg">
-                <ShieldCheck className="size-5" aria-hidden />
-              </span>
-              <div className="text-left">
-                <p className="text-sm font-semibold">Approved by a second officer</p>
-                <p className="text-muted text-xs">Nothing reaches the books on one person&apos;s say-so</p>
-              </div>
-            </div>
+            <Reveal>
+              <ProductTour />
+            </Reveal>
           </div>
         </section>
 
@@ -271,8 +263,9 @@ export default async function Home() {
           <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6">
             <SectionHeading eyebrow="Sound familiar?" title="The old way costs your society time, trust and sleep" center />
             <div className="mt-12 grid gap-4 md:grid-cols-2">
-              {PAINS.map(({ icon: Icon, pain, fix }) => (
-                <div key={pain} className="border-border bg-background flex gap-4 rounded-2xl border p-6">
+              {PAINS.map(({ icon: Icon, pain, fix }, i) => (
+                <Reveal key={pain} delay={i * 80}>
+                <div className="border-border bg-background flex h-full gap-4 rounded-2xl border p-6">
                   <span className="bg-gold-soft text-gold flex size-11 shrink-0 items-center justify-center rounded-xl">
                     <Icon className="size-5" aria-hidden />
                   </span>
@@ -284,6 +277,7 @@ export default async function Home() {
                     </p>
                   </div>
                 </div>
+                </Reveal>
               ))}
             </div>
           </div>
@@ -294,7 +288,8 @@ export default async function Home() {
           <SectionHeading eyebrow="Everything in one place" title="Built around how cooperatives actually work" center />
           <div className="mt-16 flex flex-col gap-24">
             {SHOWCASE.map((f, i) => (
-              <div key={f.title} className="grid items-center gap-10 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-16">
+              <Reveal key={f.title}>
+              <div className="grid items-center gap-10 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-16">
                 <div className={cn("flex flex-col gap-4", i % 2 === 1 && "lg:order-2")}>
                   <p className="text-accent text-xs font-semibold tracking-widest uppercase">{f.eyebrow}</p>
                   <h3 className="text-3xl font-semibold tracking-tight text-balance">{f.title}</h3>
@@ -312,6 +307,7 @@ export default async function Home() {
                   <Image src={f.image} alt={f.alt} sizes="(min-width: 1024px) 640px, 100vw" />
                 </BrowserFrame>
               </div>
+              </Reveal>
             ))}
           </div>
         </section>
@@ -322,10 +318,12 @@ export default async function Home() {
             <SectionHeading eyebrow="How it works" title="Up and running in four steps" center />
             <ol className="mt-12 grid gap-6 md:grid-cols-2 lg:grid-cols-4">
               {STEPS.map((s, i) => (
-                <li key={s.title} className="relative flex flex-col gap-3">
+                <li key={s.title}>
+                <Reveal delay={i * 100} className="relative flex flex-col gap-3">
                   <span className="bg-accent text-accent-foreground flex size-10 items-center justify-center rounded-full font-semibold">{i + 1}</span>
                   <h3 className="text-lg font-semibold">{s.title}</h3>
                   <p className="text-muted leading-relaxed">{s.body}</p>
+                </Reveal>
                 </li>
               ))}
             </ol>
