@@ -18,6 +18,8 @@ const CLOSED = {
   used: "This invitation has already been used. If it was you, sign in with the account you created.",
   revoked: "This invitation was withdrawn. Ask your society's secretary for a new link if you still need access.",
   not_found: "This link isn't valid. Check you copied all of it, or ask for a new one.",
+  awaiting_approval:
+    "This invitation is waiting for a second officer of the society to approve it, because the role can approve other people's work. Keep this link and open it again once they have.",
 };
 
 export default async function InvitePage({ params }: { params: Promise<{ token: string }> }) {
@@ -26,7 +28,7 @@ export default async function InvitePage({ params }: { params: Promise<{ token: 
 
   if (invite.status !== "valid") {
     return (
-      <Shell title="Invitation unavailable">
+      <Shell title={invite.status === "awaiting_approval" ? "Waiting for approval" : "Invitation unavailable"}>
         <p className="text-muted text-sm">{CLOSED[invite.status]}</p>
         <Link href="/sign-in" className={buttonClass("secondary", "w-fit")}>
           Go to sign in

@@ -6,6 +6,7 @@ import {
   changeOfficerRoles,
   createMember,
   inviteMember,
+  decideRoleGrant,
   inviteOfficer,
   listAccounts,
   OfficerError,
@@ -25,7 +26,7 @@ import { roleLabel } from "@/lib/roles";
 import { inSociety, requireViewer, requireWorkspace, SOCIETY_COOKIE } from "@/lib/session";
 
 export type FormState = { ok: boolean; message?: string; fieldErrors?: Record<string, string> };
-export type InviteState = FormState & { link?: string; email?: string; delivered?: boolean };
+export type InviteState = FormState & { link?: string; email?: string; delivered?: boolean; needsApproval?: boolean };
 
 export async function switchSociety(formData: FormData) {
   const viewer = await requireViewer();
@@ -195,11 +196,13 @@ export async function inviteOfficerAction(_prev: InviteState, formData: FormData
   if (roles.length === 0) fieldErrors.roles = "Choose at least one role.";
   if (Object.keys(fieldErrors).length) return { ok: false, fieldErrors };
   try {
-    const { token } = await inSociety(ws, (tx) => inviteOfficer(tx, ws.actor, { email, roles }));
+    const { token, needsApproval } = await inSociety(ws, (tx) => inviteOfficer(tx, ws.actor, { email, roles }));
     const link = `${appUrl()}/invite/${token}`;
-    const { delivered } = await sendMail(mails.officerInvite(email.toLowerCase(), ws.society.societyName, roles.map(roleLabel).join(", "), link, ws.user.name));
+    const { delivered } = await sendMail(
+      mails.officerInvite(email.toLowerCase(), ws.society.societyName, roles.map(roleLabel).join(", "), link, ws.user.name, needsApproval),
+    );
     revalidatePath("/officers");
-    return { ok: true, email: email.toLowerCase(), link, delivered };
+    return { ok: true, email: email.toLowerCase(), link, delivered, needsApproval };
   } catch (e) {
     return { ok: false, message: describe(e) };
   }
@@ -221,17 +224,31 @@ export async function updateOfficerAction(_prev: FormState, formData: FormData):
   const reason = text(formData, "reason");
   const remove = text(formData, "intent") === "remove";
   if (reason.length < 5) return { ok: false, fieldErrors: { reason: "Give a reason; it goes in the audit trail." } };
+  let pending = false;
   try {
-    await inSociety(ws, (tx) =>
-      remove ? removeOfficer(tx, ws.actor, userId, reason) : changeOfficerRoles(tx, ws.actor, userId, formData.getAll("roles").map(String), reason),
-    );
+    await inSociety(ws, async (tx) => {
+      if (remove) await removeOfficer(tx, ws.actor, userId, reason);
+      else ({ pending } = await changeOfficerRoles(tx, ws.actor, userId, formData.getAll("roles").map(String), reason));
+    });
   } catch (e) {
     return { ok: false, message: describe(e) };
   }
   revalidatePath("/officers");
   // A removed officer's row (and this form) disappears, so report removal at page level.
   if (remove) redirect("/officers?notice=removed");
-  return { ok: true, message: "Roles updated." };
+  return { ok: true, message: pending ? "Sent for approval. A second officer must approve before the new roles apply." : "Roles updated." };
+}
+
+export async function decideRoleGrantAction(formData: FormData) {
+  const ws = await requireWorkspace();
+  const decision = text(formData, "decision") === "approve" ? "approve" : "reject";
+  try {
+    await inSociety(ws, (tx) => decideRoleGrant(tx, { ...ws.actor, email: ws.user.email }, text(formData, "requestId"), decision));
+  } catch (e) {
+    redirect(`/officers?error=${encodeURIComponent(describe(e))}`);
+  }
+  revalidatePath("/officers");
+  redirect(`/officers?notice=${decision === "approve" ? "grant-approved" : "grant-rejected"}`);
 }
 
 export async function inviteMemberAction(_prev: InviteState, formData: FormData): Promise<InviteState> {

@@ -53,6 +53,8 @@ import {
   findInvitation,
   inviteMember,
   inviteOfficer,
+  listRoleGrantRequests,
+  decideRoleGrant,
   listOfficers,
   listOpenInvitations,
   removeOfficer,
@@ -457,6 +459,72 @@ describe.runIf(ADMIN)("database guardrails", () => {
     const events = await withSociety(app.db, ids.socA, (tx) => listAuditEvents(tx, ids.socA));
     expect(events.slice(0, 2).map((e) => e.action)).toEqual(["officer.removed", "officer.roles_changed"]);
     expect(await withSociety(app.db, ids.socA, (tx) => verifySocietyAuditChain(tx, ids.socA))).toMatchObject({ ok: false }); // tampered earlier in this suite
+  });
+
+  it("needs a second officer before anyone gets approval rights", async () => {
+    const secretary = actor(["secretary"], ids.treasurer);
+    // With no one else able to approve, a society's first officers get their roles straight away.
+    const first = await withSociety(app.db, ids.socA, (tx) => inviteOfficer(tx, secretary, { email: "first.chair@example.ng", roles: ["chairperson"] }));
+    expect(first.needsApproval).toBe(false);
+    await withSociety(app.db, ids.socA, (tx) => revokeInvitation(tx, secretary, first.invitationId));
+
+    const [approver, clerk] = await adminDb
+      .insert(schema.users)
+      .values([{ email: "approver@example.ng", name: "Second Approver" }, { email: "clerk@example.ng", name: "Clerk" }])
+      .returning();
+    await adminDb.insert(schema.societyUsers).values([
+      { societyId: ids.socA, userId: approver!.id, roles: ["chairperson"] },
+      { societyId: ids.socA, userId: clerk!.id, roles: ["auditor"] },
+    ]);
+    // Only an approver who can sign in counts.
+    expect((await withSociety(app.db, ids.socA, (tx) => inviteOfficer(tx, secretary, { email: "first.chair@example.ng", roles: ["chairperson"] }))).needsApproval).toBe(false);
+    await adminDb.insert(schema.accounts).values({ userId: approver!.id, accountId: approver!.id, providerId: "credential" });
+    const chairA = actor(["chairperson"], approver!.id);
+
+    // An invitation with approval rights waits; one without doesn't.
+    expect((await withSociety(app.db, ids.socA, (tx) => inviteOfficer(tx, secretary, { email: "viewer@example.ng", roles: ["auditor"] }))).needsApproval).toBe(false);
+    const invite = await withSociety(app.db, ids.socA, (tx) => inviteOfficer(tx, secretary, { email: "committee@example.ng", roles: ["loan_committee"] }));
+    expect(invite.needsApproval).toBe(true);
+    expect(await findInvitation(app.db, invite.token)).toEqual({ status: "awaiting_approval" });
+    await expect(
+      withSociety(app.db, ids.socA, (tx) => acceptInvitation(tx, invite.invitationId, { id: clerk!.id, email: "committee@example.ng" })),
+    ).rejects.toThrow(/second officer/);
+
+    const [request] = await withSociety(app.db, ids.socA, (tx) => listRoleGrantRequests(tx, secretary));
+    expect(request).toMatchObject({ kind: "invitation", who: "committee@example.ng", roles: ["loan_committee"] });
+    await expect(withSociety(app.db, ids.socA, (tx) => decideRoleGrant(tx, secretary, request!.id, "approve"))).rejects.toThrow(/asked for this role/);
+    await expect(withSociety(app.db, ids.socA, (tx) => decideRoleGrant(tx, actor(["treasurer"], clerk!.id), request!.id, "approve"))).rejects.toBeInstanceOf(
+      PermissionError,
+    );
+    await withSociety(app.db, ids.socA, (tx) => decideRoleGrant(tx, chairA, request!.id, "approve"));
+    expect(await findInvitation(app.db, invite.token)).toMatchObject({ status: "valid", roles: ["loan_committee"] });
+    await expect(withSociety(app.db, ids.socA, (tx) => decideRoleGrant(tx, chairA, request!.id, "reject"))).rejects.toThrow(/already decided/);
+
+    // Raising an officer's roles waits too; the target can't approve their own.
+    expect(await withSociety(app.db, ids.socA, (tx) => changeOfficerRoles(tx, secretary, clerk!.id, ["auditor", "loan_committee"], "Joins the committee"))).toEqual({
+      pending: true,
+    });
+    expect((await listUserSocieties(app.db, clerk!.id))[0]!.roles).toEqual(["auditor"]);
+    const [change] = await withSociety(app.db, ids.socA, (tx) => listRoleGrantRequests(tx, secretary));
+    expect(change).toMatchObject({ kind: "change", who: "Clerk", reason: "Joins the committee" });
+    await expect(withSociety(app.db, ids.socA, (tx) => decideRoleGrant(tx, actor(["chairperson"], clerk!.id), change!.id, "approve"))).rejects.toThrow(/yourself/);
+    await withSociety(app.db, ids.socA, (tx) => decideRoleGrant(tx, chairA, change!.id, "reject", "Not yet"));
+    expect((await listUserSocieties(app.db, clerk!.id))[0]!.roles).toEqual(["auditor"]);
+
+    await withSociety(app.db, ids.socA, (tx) => changeOfficerRoles(tx, secretary, clerk!.id, ["auditor", "loan_committee"], "Committee vote passed"));
+    const [again] = await withSociety(app.db, ids.socA, (tx) => listRoleGrantRequests(tx, secretary));
+    await withSociety(app.db, ids.socA, (tx) => decideRoleGrant(tx, chairA, again!.id, "approve"));
+    expect((await listUserSocieties(app.db, clerk!.id))[0]!.roles).toEqual(["loan_committee", "auditor"]);
+    // Removing approval rights needs no second officer.
+    expect(await withSociety(app.db, ids.socA, (tx) => changeOfficerRoles(tx, secretary, clerk!.id, ["auditor"], "Left the committee"))).toEqual({ pending: false });
+
+    // The separation holds in the database as well.
+    await rejectsWith(
+      admin`update role_grant_requests set status = 'approved', decided_by = requested_by, decided_at = now() where id = ${change!.id}`,
+      /role_grant_requests/,
+    );
+    const actions = (await withSociety(app.db, ids.socA, (tx) => listAuditEvents(tx, ids.socA))).map((e) => e.action);
+    expect(actions).toEqual(expect.arrayContaining(["officer.role_grant_approved", "officer.role_grant_rejected", "officer.roles_change_requested"]));
   });
 
   it("reports monthly flows from posted entries, ignoring reversed pairs", async () => {

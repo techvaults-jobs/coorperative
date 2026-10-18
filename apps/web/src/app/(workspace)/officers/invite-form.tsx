@@ -15,6 +15,12 @@ export function InviteForm({ roles }: { roles: RoleOption[] }) {
     return (
       <div className="flex flex-col gap-3 text-sm" role="status">
         <p className="text-accent font-medium">Invitation created for {state.email}.</p>
+        {state.needsApproval && (
+          <p className="border-warning/20 bg-warning-soft text-warning rounded-lg border px-3 py-2 text-xs">
+            This role can approve other people&apos;s work, so a second officer must approve the invitation on this page. The link
+            starts working once they do.
+          </p>
+        )}
         <p className="text-muted text-xs">
           {state.delivered
             ? "We've emailed it to them. You can also send the link yourself:"

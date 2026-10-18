@@ -277,8 +277,28 @@ try {
   await chair.getByText("Rejected. The preparer can see your reason").waitFor({ timeout: 10000 });
   check("approver can reject with a reason", (await chair.getByText("Reason: Amount should be 9,900").count()) === 1);
   if (SHOTS) await chair.screenshot({ path: `${SHOTS}/approvals-approver.png`, fullPage: true });
+  // Approval rights need a second officer once the society has one who can sign in
+  await page.goto(`${BASE}/officers`, { waitUntil: "networkidle" });
+  const committeeEmail = `committee.e2e.${stamp}@example.ng`;
+  await page.fill("#invite-email", committeeEmail);
+  await page.check("#invite-loan_committee");
+  await page.click("form:has(#invite-email) button[type=submit]");
+  const committeeLink = (await page.locator("#invite-link").inputValue({ timeout: 10000 })).replace(/^https?:\/\/[^/]+/, BASE);
+  check("an invitation with approval rights waits for a second officer", (await page.getByText("a second officer must approve the invitation").count()) === 1);
+  const visitor = await (await browser.newContext()).newPage();
+  await visitor.goto(committeeLink, { waitUntil: "networkidle" });
+  check("the waiting invitation link explains it isn't usable yet", (await visitor.getByRole("heading", { name: "Waiting for approval" }).count()) === 1);
+  await page.reload({ waitUntil: "networkidle" });
+  const ownRequest = page.locator("article", { hasText: committeeEmail });
+  check("the officer who asked can't approve it", (await ownRequest.count()) === 1 && (await ownRequest.getByRole("button", { name: "Approve" }).count()) === 0);
   await chair.goto(`${BASE}/officers`, { waitUntil: "networkidle" });
-  check("a chairperson can't manage officers", (await chair.getByText("doesn't include managing officers").count()) === 1);
+  check("a chairperson sees role requests but can't manage officers", (await chair.getByText("Invite an officer").count()) === 0);
+  await chair.locator("article", { hasText: committeeEmail }).getByRole("button", { name: "Approve" }).click();
+  await chair.getByText("Approved. The roles now apply").waitFor({ timeout: 10000 });
+  await visitor.goto(committeeLink, { waitUntil: "networkidle" });
+  check("once approved, the invitation link works", (await visitor.getByRole("heading", { name: "Set up your account" }).count()) === 1);
+  await visitor.context().close();
+  if (SHOTS) await chair.screenshot({ path: `${SHOTS}/officers-approval.png`, fullPage: true });
 
   // Loans: eligibility-checked application, committee decision, disbursement through journal approval
   await page.goto(`${BASE}/loans/new`, { waitUntil: "networkidle" });

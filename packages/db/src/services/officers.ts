@@ -3,11 +3,11 @@
  * an officer with officers.manage creates an invitation link, which the invitee opens to
  * set a password (or, if they already have an account, to join with it).
  */
-import { can, OFFICER_ROLES, ROLES, type OfficerRole, type Role } from "@techvaults/core";
+import { can, canApproveRoleGrant, isSensitiveGrant, OFFICER_ROLES, ROLES, type OfficerRole, type Role } from "@techvaults/core";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { createHash, randomBytes } from "node:crypto";
 import type { Database, Tx } from "../client.js";
-import { members, officerInvitations, societyUsers, users } from "../schema.js";
+import { accounts, members, officerInvitations, roleGrantRequests, societyUsers, users } from "../schema.js";
 import { recordAudit } from "./audit.js";
 import { PermissionError, type Actor } from "./ledger.js";
 
@@ -29,6 +29,19 @@ function officerRoles(roles: readonly string[]): OfficerRole[] {
   if (unknown.length) throw new OfficerError(`Unknown role: ${unknown.join(", ")}`);
   // Keep the canonical order so the stored list and the audit trail read consistently.
   return OFFICER_ROLES.filter((r) => unique.includes(r));
+}
+
+/**
+ * Whether someone other than `exclude` could approve a sensitive role grant in this society.
+ * Only people who can sign in count; a placeholder officer with no login can't approve anything.
+ */
+async function otherApproverExists(tx: Tx, societyId: string, exclude: string[]): Promise<boolean> {
+  const rows = await tx
+    .selectDistinct({ userId: societyUsers.userId, roles: societyUsers.roles })
+    .from(societyUsers)
+    .innerJoin(accounts, eq(accounts.userId, societyUsers.userId))
+    .where(eq(societyUsers.societyId, societyId));
+  return rows.some((r) => !exclude.includes(r.userId) && canApproveRoleGrant(r.roles as Role[]));
 }
 
 /** Roles in canonical order, without duplicates or unknown names. */
@@ -73,6 +86,7 @@ export interface InvitationView {
   invitedByName: string;
   createdAt: Date;
   expiresAt: Date;
+  needsApproval: boolean;
 }
 
 /** Invitations not yet accepted or revoked. Expired ones are included so they can be tidied up. */
@@ -86,6 +100,7 @@ export async function listOpenInvitations(tx: Tx, actor: Actor): Promise<Invitat
       invitedByName: users.name,
       createdAt: officerInvitations.createdAt,
       expiresAt: officerInvitations.expiresAt,
+      needsApproval: officerInvitations.needsApproval,
     })
     .from(officerInvitations)
     .innerJoin(users, eq(users.id, officerInvitations.invitedBy))
@@ -103,7 +118,7 @@ export async function inviteOfficer(
   actor: Actor,
   input: { email: string; roles: readonly string[] },
   now = new Date(),
-): Promise<{ invitationId: string; token: string; expiresAt: Date }> {
+): Promise<{ invitationId: string; token: string; expiresAt: Date; needsApproval: boolean }> {
   requireManager(actor);
   const email = normaliseEmail(input.email);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new OfficerError("Enter a valid email address.");
@@ -124,19 +139,26 @@ export async function inviteOfficer(
 
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(now.getTime() + INVITATION_DAYS * 24 * 60 * 60 * 1000);
+  // A role that approves or manages others needs a second officer's approval, unless the
+  // society has no one else who could give it yet (its first officers).
+  const sensitive = isSensitiveGrant(roles);
+  const needsApproval = sensitive && (await otherApproverExists(tx, actor.societyId, [actor.userId]));
   const [row] = await tx
     .insert(officerInvitations)
-    .values({ societyId: actor.societyId, email, roles, tokenHash: hashToken(token), invitedBy: actor.userId, createdAt: now, expiresAt })
+    .values({ societyId: actor.societyId, email, roles, tokenHash: hashToken(token), invitedBy: actor.userId, createdAt: now, expiresAt, needsApproval })
     .returning({ id: officerInvitations.id });
+  if (needsApproval) {
+    await tx.insert(roleGrantRequests).values({ societyId: actor.societyId, invitationId: row!.id, roles, requestedBy: actor.userId });
+  }
   await recordAudit(tx, {
     societyId: actor.societyId,
     actorId: actor.userId,
     action: "officer.invited",
     entityType: "officer_invitation",
     entityId: row!.id,
-    after: { email, roles, expiresAt: expiresAt.toISOString() },
+    after: { email, roles, expiresAt: expiresAt.toISOString(), needsApproval, ...(sensitive && !needsApproval ? { grantedWithoutSecondOfficer: true } : {}) },
   });
-  return { invitationId: row!.id, token, expiresAt };
+  return { invitationId: row!.id, token, expiresAt, needsApproval };
 }
 
 /**
@@ -211,7 +233,7 @@ async function closeInvitation(tx: Tx, actor: Actor, invitationId: string, actio
 
 export type InvitationLookup =
   | { status: "valid"; id: string; societyId: string; societyName: string; email: string; roles: Role[]; expiresAt: Date; memberId: string | null }
-  | { status: "expired" | "used" | "revoked" | "not_found" };
+  | { status: "expired" | "used" | "revoked" | "not_found" | "awaiting_approval" };
 
 /** Look up an invitation by the token in its link, before any society is in scope. */
 export async function findInvitation(db: Database | Tx, token: string, now = new Date()): Promise<InvitationLookup> {
@@ -226,10 +248,12 @@ export async function findInvitation(db: Database | Tx, token: string, now = new
     accepted_at: string | null;
     revoked_at: string | null;
     member_id: string | null;
+    needs_approval: boolean;
   }>(sql`select * from invitation_for_token(${hashToken(token)})`);
   if (!row) return { status: "not_found" };
   if (row.accepted_at) return { status: "used" };
   if (row.revoked_at) return { status: "revoked" };
+  if (row.needs_approval) return { status: "awaiting_approval" };
   const expiresAt = new Date(row.expires_at);
   if (expiresAt <= now) return { status: "expired" };
   return {
@@ -256,6 +280,7 @@ export async function acceptInvitation(
 ): Promise<{ societyId: string; roles: Role[] }> {
   const [inv] = await tx.select().from(officerInvitations).where(eq(officerInvitations.id, invitationId)).for("update");
   if (!inv || inv.acceptedAt || inv.revokedAt) throw new OfficerError("This invitation was already used or withdrawn.");
+  if (inv.needsApproval) throw new OfficerError("This invitation is waiting for a second officer's approval.");
   if (inv.expiresAt <= now) throw new OfficerError("This invitation has expired. Ask for a new one.");
   if (normaliseEmail(user.email) !== inv.email) throw new OfficerError(`This invitation is for ${inv.email}.`);
 
@@ -283,7 +308,7 @@ export async function acceptInvitation(
   return { societyId: inv.societyId, roles };
 }
 
-export async function changeOfficerRoles(tx: Tx, actor: Actor, userId: string, newRoles: readonly string[], reason: string): Promise<void> {
+export async function changeOfficerRoles(tx: Tx, actor: Actor, userId: string, newRoles: readonly string[], reason: string): Promise<{ pending: boolean }> {
   requireManager(actor);
   if (userId === actor.userId) throw new OfficerError("You can't change your own roles. Ask another officer who manages officers.");
   if (!reason.trim()) throw new OfficerError("Give a reason for the change.");
@@ -292,6 +317,20 @@ export async function changeOfficerRoles(tx: Tx, actor: Actor, userId: string, n
   if (!current) throw new OfficerError("That person is not an officer of this society.");
   // Officer roles change; member-portal access, if any, is kept.
   const roles = sortRoles([...officerRoles(newRoles), ...(current.roles.includes("member") ? ["member"] : [])]);
+  if (isSensitiveGrant(roles, current.roles as Role[]) && (await otherApproverExists(tx, actor.societyId, [actor.userId, userId]))) {
+    await tx.insert(roleGrantRequests).values({ societyId: actor.societyId, userId, roles, reason, requestedBy: actor.userId });
+    await recordAudit(tx, {
+      societyId: actor.societyId,
+      actorId: actor.userId,
+      action: "officer.roles_change_requested",
+      entityType: "society_user",
+      entityId: userId,
+      before: { roles: current.roles },
+      after: { roles },
+      reason,
+    });
+    return { pending: true };
+  }
   await tx.update(societyUsers).set({ roles }).where(member);
   await recordAudit(tx, {
     societyId: actor.societyId,
@@ -303,6 +342,7 @@ export async function changeOfficerRoles(tx: Tx, actor: Actor, userId: string, n
     after: { roles },
     reason,
   });
+  return { pending: false };
 }
 
 /** Remove someone's access to the society. Their past work stays attributed to them. */
@@ -324,5 +364,100 @@ export async function removeOfficer(tx: Tx, actor: Actor, userId: string, reason
     entityId: userId,
     before: { roles: removed.roles },
     reason,
+  });
+}
+
+export interface RoleGrantView {
+  id: string;
+  kind: "invitation" | "change";
+  who: string;
+  roles: string[];
+  reason: string | null;
+  requestedBy: string;
+  requestedByName: string;
+  requestedAt: Date;
+  targetUserId: string | null;
+}
+
+/** Sensitive role grants waiting for a second officer. */
+export async function listRoleGrantRequests(tx: Tx, actor: Actor): Promise<RoleGrantView[]> {
+  if (!canApproveRoleGrant(actor.roles)) throw new PermissionError("Your role cannot see role requests");
+  const rows = await tx.execute<{
+    id: string;
+    invitation_id: string | null;
+    user_id: string | null;
+    roles: string[];
+    reason: string | null;
+    requested_by: string;
+    requested_by_name: string;
+    requested_at: string;
+    invite_email: string | null;
+    user_name: string | null;
+  }>(sql`
+    select g.id, g.invitation_id, g.user_id, g.roles, g.reason, g.requested_by, r.name as requested_by_name, g.requested_at,
+           i.email as invite_email, u.name as user_name
+    from role_grant_requests g
+    join users r on r.id = g.requested_by
+    left join officer_invitations i on i.id = g.invitation_id
+    left join users u on u.id = g.user_id
+    where g.society_id = ${actor.societyId} and g.status = 'pending'
+      -- A withdrawn invitation, or an officer since removed, has nothing left to approve.
+      and (g.invitation_id is null or (i.accepted_at is null and i.revoked_at is null))
+      and (g.user_id is null or exists (select 1 from society_users s where s.society_id = g.society_id and s.user_id = g.user_id))
+    order by g.requested_at
+  `);
+  return rows.map((r) => ({
+    id: r.id,
+    kind: r.invitation_id ? "invitation" : "change",
+    who: r.invite_email ?? r.user_name ?? "",
+    roles: r.roles,
+    reason: r.reason,
+    requestedBy: r.requested_by,
+    requestedByName: r.requested_by_name,
+    requestedAt: new Date(r.requested_at),
+    targetUserId: r.user_id,
+  }));
+}
+
+/**
+ * A second officer approves or rejects a sensitive role grant. They must manage officers or approve
+ * settings, and can't be the person who asked or the person receiving the role.
+ */
+export async function decideRoleGrant(tx: Tx, actor: Actor & { email?: string }, requestId: string, decision: "approve" | "reject", reason = ""): Promise<void> {
+  if (!canApproveRoleGrant(actor.roles)) throw new PermissionError("Your role cannot approve role changes");
+  const [g] = await tx.select().from(roleGrantRequests).where(and(eq(roleGrantRequests.id, requestId), eq(roleGrantRequests.societyId, actor.societyId))).for("update");
+  if (!g || g.status !== "pending") throw new OfficerError("That request was already decided.");
+  if (g.requestedBy === actor.userId) throw new PermissionError("The person who asked for this role can't also approve it");
+  if (g.userId === actor.userId) throw new PermissionError("You can't approve a role for yourself");
+  let invitation: typeof officerInvitations.$inferSelect | undefined;
+  if (g.invitationId) {
+    [invitation] = await tx.select().from(officerInvitations).where(eq(officerInvitations.id, g.invitationId)).for("update");
+    if (actor.email && invitation && normaliseEmail(actor.email) === invitation.email) throw new PermissionError("You can't approve a role for yourself");
+  }
+  await tx
+    .update(roleGrantRequests)
+    .set({ status: decision === "approve" ? "approved" : "rejected", decidedBy: actor.userId, decidedAt: new Date(), decisionReason: reason.trim() || null })
+    .where(eq(roleGrantRequests.id, requestId));
+  if (decision === "approve") {
+    if (invitation) {
+      if (invitation.acceptedAt || invitation.revokedAt) throw new OfficerError("That invitation was withdrawn.");
+      await tx.update(officerInvitations).set({ needsApproval: false }).where(eq(officerInvitations.id, invitation.id));
+    } else if (g.userId) {
+      const where = and(eq(societyUsers.societyId, actor.societyId), eq(societyUsers.userId, g.userId));
+      const [current] = await tx.select().from(societyUsers).where(where).for("update");
+      if (!current) throw new OfficerError("That person is no longer an officer of this society.");
+      await tx.update(societyUsers).set({ roles: sortRoles([...g.roles.filter((r) => r !== "member"), ...(current.roles.includes("member") ? ["member"] : [])]) }).where(where);
+    }
+  } else if (invitation && !invitation.acceptedAt && !invitation.revokedAt) {
+    await tx.update(officerInvitations).set({ revokedAt: new Date(), revokedBy: actor.userId }).where(eq(officerInvitations.id, invitation.id));
+  }
+  await recordAudit(tx, {
+    societyId: actor.societyId,
+    actorId: actor.userId,
+    action: decision === "approve" ? "officer.role_grant_approved" : "officer.role_grant_rejected",
+    entityType: "role_grant_request",
+    entityId: requestId,
+    after: { roles: g.roles, ...(invitation ? { email: invitation.email } : { userId: g.userId }) },
+    ...(reason.trim() ? { reason } : {}),
   });
 }

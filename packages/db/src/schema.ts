@@ -336,6 +336,8 @@ export const officerInvitations = pgTable(
     tokenHash: text("token_hash").notNull().unique(),
     /** Set for member-portal invitations: the member record the new account is tied to. */
     memberId: uuid("member_id"),
+    /** A sensitive role awaits a second officer's approval; the link can't be used until then. */
+    needsApproval: boolean("needs_approval").notNull().default(false),
     invitedBy: uuid("invited_by").notNull().references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
@@ -614,5 +616,31 @@ export const financialYears = pgTable(
     uniqueIndex("financial_years_society_end").on(t.societyId, t.endDate),
     foreignKey({ columns: [t.societyId, t.submissionId], foreignColumns: [journalSubmissions.societyId, journalSubmissions.id] }),
     check("financial_years_status", sql`${t.status} in ('closing', 'closed', 'abandoned')`),
+  ],
+);
+
+/** A sensitive role (one that approves or manages others) waiting for a second officer's approval. */
+export const roleGrantRequests = pgTable(
+  "role_grant_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    societyId: uuid("society_id").notNull().references(() => societies.id),
+    /** An invitation, or a change to an existing officer's roles. */
+    invitationId: uuid("invitation_id").references(() => officerInvitations.id),
+    userId: uuid("user_id").references(() => users.id),
+    roles: text("roles").array().notNull(),
+    reason: text("reason"),
+    status: text("status").notNull().default("pending"),
+    requestedBy: uuid("requested_by").notNull().references(() => users.id),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedBy: uuid("decided_by").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decisionReason: text("decision_reason"),
+  },
+  (t) => [
+    index("role_grant_requests_society").on(t.societyId, t.status),
+    check("role_grant_requests_target", sql`(${t.invitationId} is null) <> (${t.userId} is null)`),
+    check("role_grant_requests_status", sql`${t.status} in ('pending', 'approved', 'rejected')`),
+    check("role_grant_requests_separation", sql`${t.decidedBy} is null or (${t.decidedBy} <> ${t.requestedBy} and ${t.decidedBy} is distinct from ${t.userId})`),
   ],
 );

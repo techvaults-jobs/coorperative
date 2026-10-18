@@ -67,12 +67,16 @@ export const appUrl = () => (process.env.BETTER_AUTH_URL ?? "http://localhost:30
 // Messages
 
 export const mails = {
-  officerInvite: (to: string, society: string, roles: string, link: string, inviter: string): Mail => ({
+  officerInvite: (to: string, society: string, roles: string, link: string, inviter: string, needsApproval = false): Mail => ({
     to,
     kind: "officer_invite",
     subject: `You're invited to ${society} on Cooperative Vaults`,
     heading: `Join ${society}`,
-    paragraphs: [`${inviter} has invited you to ${society} on Cooperative Vaults as ${roles}.`, "Use the button below to set your password. You'll then set up an authenticator app for two-factor sign-in."],
+    paragraphs: [
+      `${inviter} has invited you to ${society} on Cooperative Vaults as ${roles}.`,
+      ...(needsApproval ? ["Because this role can approve other people's work, a second officer of the society must confirm it first. The link starts working as soon as they do."] : []),
+      "Use the button below to set your password. You'll then set up an authenticator app for two-factor sign-in.",
+    ],
     action: { label: "Accept invitation", url: link },
     footnote: "This link works once and expires in 7 days. If you weren't expecting it, you can ignore this email.",
   }),
