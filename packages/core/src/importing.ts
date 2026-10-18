@@ -175,3 +175,59 @@ export function parseOpeningBalancesCsv(text: string): { rows: OpeningBalanceRow
   }
   return { rows: out, accountCodes: accountCols.map((c) => c.code), issues };
 }
+
+// ---------------------------------------------------------------------------
+// Running loans brought across
+
+export interface LegacyLoanRow {
+  line: number;
+  memberNo: string;
+  productCode: string;
+  outstanding: Kobo;
+  remainingMonths: number;
+  nextDue: string;
+}
+
+/**
+ * Read loans that are already running: member no, product code, outstanding principal,
+ * remaining monthly instalments and the next due date. The remaining schedule is recalculated
+ * under the product's approved terms.
+ */
+export function parseLegacyLoansCsv(text: string): { rows: LegacyLoanRow[]; issues: ImportIssue[] } {
+  const { header, rows } = readTable(text);
+  const col = {
+    memberNo: find(header, ["member no", "member number", "membership no", "member id"]),
+    product: find(header, ["product", "product code", "loan product"]),
+    outstanding: find(header, ["outstanding", "outstanding principal", "balance", "principal outstanding"]),
+    remaining: find(header, ["remaining months", "remaining instalments", "months left", "remaining"]),
+    nextDue: find(header, ["next due", "next due date", "next payment"]),
+  };
+  const missing = Object.entries(col).filter(([, i]) => i < 0).map(([k]) => k);
+  if (missing.length) {
+    return { rows: [], issues: [{ line: 1, message: "The first row must name: Member no, Product code, Outstanding, Remaining months, Next due date." }] };
+  }
+  const issues: ImportIssue[] = [];
+  const out: LegacyLoanRow[] = [];
+  for (const { line, cells } of rows) {
+    const get = (i: number) => (cells[i] ?? "").trim();
+    const problems: string[] = [];
+    const memberNo = get(col.memberNo);
+    const productCode = get(col.product).toUpperCase();
+    if (!memberNo) problems.push("no member number");
+    if (!productCode) problems.push("no product code");
+    let outstanding: Kobo | null = null;
+    try {
+      outstanding = parseNaira(get(col.outstanding));
+      if (outstanding <= 0n) problems.push("outstanding must be more than ₦0");
+    } catch {
+      problems.push(`“${get(col.outstanding)}” isn't an amount`);
+    }
+    const remainingMonths = Number(get(col.remaining));
+    if (!Number.isInteger(remainingMonths) || remainingMonths < 1 || remainingMonths > 120) problems.push("remaining months must be 1 to 120");
+    const nextDue = parseDate(get(col.nextDue));
+    if (!nextDue) problems.push(`“${get(col.nextDue)}” isn't a date (use DD/MM/YYYY)`);
+    if (problems.length) issues.push({ line, message: problems.join("; ") });
+    else out.push({ line, memberNo, productCode, outstanding: outstanding!, remainingMonths, nextDue: nextDue! });
+  }
+  return { rows: out, issues };
+}

@@ -49,7 +49,7 @@ export interface PostedEntry {
 }
 
 type SubmissionStatus = (typeof journalSubmissions.$inferSelect)["status"];
-type EntryDraft = Omit<JournalEntryDraft, "societyId">;
+type EntryDraft = Omit<JournalEntryDraft, "societyId"> & { kind?: "standard" | "closing" };
 
 /**
  * Submit a balanced journal entry for approval. Nothing reaches the ledger until a second
@@ -64,6 +64,12 @@ export async function submitJournalEntry(tx: Tx, actor: Actor, draft: EntryDraft
 async function insertSubmission(tx: Tx, actor: Actor, draft: EntryDraft & { reversesEntryId?: string }): Promise<Submission> {
   const entry: JournalEntryDraft = { ...draft, societyId: actor.societyId };
   validateEntry(entry);
+  if ((draft.kind ?? "standard") !== "closing") {
+    const [closed] = await tx.execute<{ end_date: string }>(
+      sql`select end_date::text from financial_years where society_id = ${actor.societyId} and status = 'closed' and end_date >= ${entry.entryDate}::date limit 1`,
+    );
+    if (closed) throw new LedgerError("INVALID_DATE", `The books are closed up to ${closed.end_date}. Date the entry in an open year.`);
+  }
   await checkAccounts(tx, entry.lines);
 
   const inserted = await tx
@@ -82,6 +88,7 @@ async function insertSubmission(tx: Tx, actor: Actor, draft: EntryDraft & { reve
         ...(l.memo ? { memo: l.memo } : {}),
       })),
       reversesEntryId: draft.reversesEntryId ?? null,
+      kind: draft.kind ?? "standard",
       preparedBy: actor.userId,
     })
     .onConflictDoNothing({ target: [journalSubmissions.societyId, journalSubmissions.idempotencyKey] })
@@ -196,6 +203,7 @@ export async function approveSubmission(tx: Tx, actor: Actor, submissionId: stri
       idempotencyKey: submission.idempotencyKey,
       reversesEntryId: submission.reversesEntryId,
       submissionId: submission.id,
+      kind: submission.kind,
       preparedBy: submission.preparedBy,
       postedBy: actor.userId,
     })
@@ -239,6 +247,7 @@ async function settleLoans(tx: Tx, submissionId: string, lines: { loanId?: strin
   await tx.execute(sql`update loans set status = 'active' where disbursement_submission_id = ${submissionId} and status = 'disbursing'`);
   await tx.execute(sql`update payroll_runs set status = 'posted' where submission_id = ${submissionId} and status = 'submitted'`);
   await tx.execute(sql`update withdrawals set status = 'paid' where payment_submission_id = ${submissionId} and status = 'paying'`);
+  await tx.execute(sql`update financial_years set status = 'closed' where submission_id = ${submissionId} and status = 'closing'`);
   const loanIds = [...new Set(lines.flatMap((l) => (l.loanId ? [l.loanId] : [])))];
   if (loanIds.length === 0) return;
   await tx.execute(sql`
@@ -270,6 +279,8 @@ async function decide(tx: Tx, actor: Actor, submissionId: string, status: "rejec
     .update(journalSubmissions)
     .set({ status, decidedBy: actor.userId, decidedAt: new Date(), decisionReason: reason })
     .where(eq(journalSubmissions.id, submissionId));
+  // A year-end close that was turned down is abandoned; the year can be closed again.
+  await tx.execute(sql`update financial_years set status = 'abandoned' where submission_id = ${submissionId} and status = 'closing'`);
   // A withdrawal whose payment was turned down can be paid again.
   await tx.execute(sql`update withdrawals set status = 'approved', payment_submission_id = null where payment_submission_id = ${submissionId} and status = 'paying'`);
   // A payroll run whose posting was turned down goes back to reconciled, to fix and resubmit.

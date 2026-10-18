@@ -215,6 +215,7 @@ export const journalEntries = pgTable(
     policyVersionId: uuid("policy_version_id"),
     /** The approved submission this entry came from. Entries posted before maker-checker have none. */
     submissionId: uuid("submission_id"),
+    kind: text("kind").notNull().default("standard"),
     preparedBy: uuid("prepared_by").notNull().references(() => users.id),
     /** The approver. Since maker-checker, always someone other than the preparer. */
     postedBy: uuid("posted_by").notNull().references(() => users.id),
@@ -256,6 +257,8 @@ export const journalSubmissions = pgTable(
     idempotencyKey: text("idempotency_key").notNull(),
     lines: jsonb("lines").$type<SubmissionLine[]>().notNull(),
     reversesEntryId: uuid("reverses_entry_id"),
+    /** "closing" for year-end closing entries, which reports leave out of a year's results. */
+    kind: text("kind").notNull().default("standard"),
     status: submissionStatus("status").notNull().default("pending"),
     preparedBy: uuid("prepared_by").notNull().references(() => users.id),
     preparedAt: timestamp("prepared_at", { withTimezone: true }).notNull().defaultNow(),
@@ -589,5 +592,27 @@ export const withdrawals = pgTable(
     index("withdrawals_society_status").on(t.societyId, t.status),
     check("withdrawals_amount_positive", sql`${t.amount} > 0`),
     check("withdrawals_separation_of_duties", sql`${t.status} not in ('approved', 'rejected', 'paying', 'paid') or ${t.decidedBy} <> ${t.requestedBy}`),
+  ],
+);
+
+/** A closed financial year. While closing, the closing entry awaits approval; once closed, the year is locked. */
+export const financialYears = pgTable(
+  "financial_years",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    societyId: uuid("society_id").notNull().references(() => societies.id),
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date").notNull(),
+    status: text("status").notNull().default("closing"),
+    surplus: bigint("surplus", { mode: "bigint" }).notNull(),
+    statutoryReserve: bigint("statutory_reserve", { mode: "bigint" }).notNull(),
+    submissionId: uuid("submission_id"),
+    closedBy: uuid("closed_by").notNull().references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("financial_years_society_end").on(t.societyId, t.endDate),
+    foreignKey({ columns: [t.societyId, t.submissionId], foreignColumns: [journalSubmissions.societyId, journalSubmissions.id] }),
+    check("financial_years_status", sql`${t.status} in ('closing', 'closed', 'abandoned')`),
   ],
 );

@@ -102,14 +102,15 @@ const requireLedger = (actor: Actor) => {
   if (!can(actor.roles, "ledger.read")) throw new PermissionError("Your role cannot view financial reports");
 };
 
-async function sumsByAccount(tx: Tx, actor: Actor, from: string | null, to: string): Promise<AccountLine[]> {
+async function sumsByAccount(tx: Tx, actor: Actor, from: string | null, to: string, opts: { excludeClosing?: boolean } = {}): Promise<AccountLine[]> {
   const rows = await tx.execute<{ id: string; code: string; name: string; class: AccountLine["class"]; net: string }>(sql`
     select a.id, a.code, a.name, a.class,
       coalesce(sum(case when l.side = 'debit' then l.amount else -l.amount end), 0)::text as net
     from ledger_accounts a
     left join journal_lines l on l.account_id = a.id
       and l.entry_id in (select e.id from journal_entries e where e.society_id = ${actor.societyId}
-                         and e.entry_date <= ${to}::date ${from ? sql`and e.entry_date >= ${from}::date` : sql``})
+                         and e.entry_date <= ${to}::date ${from ? sql`and e.entry_date >= ${from}::date` : sql``}
+                         ${opts.excludeClosing ? sql`and e.kind <> 'closing'` : sql``})
     where a.society_id = ${actor.societyId}
     group by a.id
     order by a.code
@@ -167,7 +168,8 @@ export interface IncomeStatement {
 /** Income and expenditure for a period. */
 export async function incomeStatement(tx: Tx, actor: Actor, from: string, to: string): Promise<IncomeStatement> {
   requireLedger(actor);
-  const lines = await sumsByAccount(tx, actor, from, to);
+  // Closing entries move a year's result into reserves; they aren't part of the year's results.
+  const lines = await sumsByAccount(tx, actor, from, to, { excludeClosing: true });
   const income = lines.filter((l) => l.class === "income" && l.amount !== 0n);
   const expenses = lines.filter((l) => l.class === "expense" && l.amount !== 0n);
   const sum = (ls: AccountLine[]) => kobo(ls.reduce((s, l) => s + l.amount, 0n));

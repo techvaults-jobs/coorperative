@@ -7,11 +7,11 @@ import { Alert } from "@/components/ui/alert";
 import { Button, buttonClass } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Field, Input, Textarea } from "@/components/ui/field";
-import { balancesImportAction, membersImportAction, type ImportState } from "./actions";
+import { balancesImportAction, loansImportAction, membersImportAction, type ImportState } from "./actions";
 
 /** Upload → preview with every problem listed → import, for members or opening balances. */
-export function ImportWizard({ kind, templateHref, intro, defaultDate }: { kind: "members" | "balances"; templateHref: string; intro: string; defaultDate?: string }) {
-  const [state, action, pending] = useActionState<ImportState, FormData>(kind === "members" ? membersImportAction : balancesImportAction, { ok: false, step: "preview" });
+export function ImportWizard({ kind, templateHref, intro, defaultDate }: { kind: "members" | "balances" | "loans"; templateHref: string; intro: string; defaultDate?: string }) {
+  const [state, action, pending] = useActionState<ImportState, FormData>(kind === "members" ? membersImportAction : kind === "loans" ? loansImportAction : balancesImportAction, { ok: false, step: "preview" });
 
   if (state.step === "done") {
     return (
@@ -38,7 +38,7 @@ export function ImportWizard({ kind, templateHref, intro, defaultDate }: { kind:
     <div className="flex flex-col gap-6">
       <Card>
         <CardHeader
-          title={kind === "members" ? "Upload the member register" : "Upload opening balances"}
+          title={kind === "members" ? "Upload the member register" : kind === "loans" ? "Upload running loans" : "Upload opening balances"}
           description={intro}
           actions={
             <a href={templateHref} className={buttonClass("secondary", undefined, "sm")} download>
@@ -52,7 +52,7 @@ export function ImportWizard({ kind, templateHref, intro, defaultDate }: { kind:
             <Field label="File" htmlFor={`${kind}-file`} hint="CSV, as saved from Excel or Google Sheets (2 MB at most).">
               <Input id={`${kind}-file`} name="file" type="file" accept=".csv,text/csv" className="py-1.5" />
             </Field>
-            {kind === "balances" ? (
+            {kind !== "members" ? (
               <Field label="Balances as at" htmlFor="asOf">
                 <Input id="asOf" name="asOf" type="date" defaultValue={defaultDate} required />
               </Field>
@@ -120,9 +120,9 @@ export function ImportWizard({ kind, templateHref, intro, defaultDate }: { kind:
               <form action={action} className="flex flex-wrap items-center gap-3">
                 <input type="hidden" name="commit" value="1" />
                 <input type="hidden" name="csv" value={state.csv} />
-                {kind === "balances" && <input type="hidden" name="asOf" value={state.asOf ?? defaultDate} />}
+                {kind !== "members" && <input type="hidden" name="asOf" value={state.asOf ?? defaultDate} />}
                 <Button type="submit" disabled={pending}>
-                  {pending ? "Working…" : kind === "members" ? "Import members" : "Prepare opening balances entry"}
+                  {pending ? "Working…" : kind === "members" ? "Import members" : kind === "loans" ? "Bring loans across" : "Prepare opening balances entry"}
                 </Button>
                 <span className="text-muted text-xs">{kind === "members" ? "Everyone in the preview is added at once." : "Another officer approves the entry."}</span>
               </form>

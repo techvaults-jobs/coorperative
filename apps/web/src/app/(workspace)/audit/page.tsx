@@ -36,6 +36,8 @@ const ACTION_LABEL: Record<string, string> = {
   "loan.rejected": "Loan declined",
   "loan.withdrawn": "Loan withdrawn",
   "loan.disbursement_prepared": "Loan disbursement prepared",
+  "year.close_prepared": "Year-end close prepared",
+  "loans.brought_across": "Running loans brought across",
   "withdrawal.requested": "Withdrawal requested",
   "withdrawal.approved": "Withdrawal approved",
   "withdrawal.rejected": "Withdrawal declined",

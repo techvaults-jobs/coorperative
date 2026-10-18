@@ -13,7 +13,7 @@ export default async function ImportPage({ searchParams }: { searchParams: Promi
   const canBalances = hasPermission(ws, "ledger.prepare");
   if (!canMembers && !canBalances) return <EmptyState title="Your role can't import records." />;
   const { tab: tabParam } = await searchParams;
-  const tab = tabParam === "balances" && canBalances ? "balances" : canMembers ? "members" : "balances";
+  const tab = (tabParam === "balances" || tabParam === "loans") && canBalances ? tabParam : canMembers ? "members" : "balances";
   const { terminology } = await requireSociety();
   return (
     <>
@@ -28,6 +28,7 @@ export default async function ImportPage({ searchParams }: { searchParams: Promi
         tabs={[
           ...(canMembers ? [{ key: "members", label: "1. Member register", href: "/members/import?tab=members" }] : []),
           ...(canBalances ? [{ key: "balances", label: "2. Opening balances", href: "/members/import?tab=balances" }] : []),
+          ...(canBalances && hasPermission(ws, "loans.prepare") ? [{ key: "loans", label: "3. Running loans", href: "/members/import?tab=loans" }] : []),
         ]}
       />
       {tab === "members" ? (
@@ -35,6 +36,13 @@ export default async function ImportPage({ searchParams }: { searchParams: Promi
           kind="members"
           templateHref="/members/import/template?kind=members"
           intro={`One row per member. “Member no” and “Full name” are required; ${terminology.externalId}, ${terminology.group}, phone, email, date joined (DD/MM/YYYY) and status are optional. The import adds everyone or no one.`}
+        />
+      ) : tab === "loans" ? (
+        <ImportWizard
+          kind="loans"
+          templateHref="/members/import/template?kind=loans"
+          defaultDate={todayIso()}
+          intro="One row per loan still being repaid: Member no, Product code (from Products), Outstanding principal, Remaining months, Next due date. Each becomes a loan whose remaining balance is spread over the remaining months at the product's approved rate; the preview shows the new monthly payment to check against your records. One journal entry against 3900 Opening balances carries the balances, and the loans go live when a second officer approves it."
         />
       ) : (
         <ImportWizard

@@ -1,4 +1,4 @@
-import { ArrowUpRight, BarChart3, FileText, Landmark, Scale, Timer } from "lucide-react";
+import { ArrowUpRight, BarChart3, FileText, Landmark, Lock, Scale, Timer } from "lucide-react";
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
@@ -17,6 +17,7 @@ export default async function ReportsPage() {
     ...(modules.includes("loans") ? [{ href: "/reports/loans", icon: Timer, title: "Loan portfolio ageing", body: "Active loans by days overdue, outstanding principal and arrears, with PAR." }] : []),
     { href: "/members", icon: FileText, title: "Member statements", body: "Open a member and choose Statement for a printable statement of any period." },
     { href: "/trial-balance", icon: Scale, title: "Trial balance", body: "Debits and credits for every account; the check that the books balance." },
+    { href: "/reports/year-end", icon: Lock, title: "Year-end close", body: "Close a financial year into reserves, with 25% to the statutory reserve, and lock it." },
   ];
   return (
     <>

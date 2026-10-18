@@ -53,3 +53,12 @@ describe("opening balances import", () => {
     expect(r.issues.map((i) => i.line)).toEqual([5, 6]);
   });
 });
+
+describe("running loans import", () => {
+  it("reads loans and reports bad lines", async () => {
+    const { parseLegacyLoansCsv } = await import("./importing.js");
+    const r = parseLegacyLoansCsv("Member no,Product code,Outstanding,Remaining months,Next due date\nM-1,reg-loan,\"91,329.65\",9,31/10/2026\nM-2,REG-LOAN,0,9,31/10/2026\nM-3,REG-LOAN,100,200,31/10/2026\n");
+    expect(r.rows).toEqual([{ line: 2, memberNo: "M-1", productCode: "REG-LOAN", outstanding: parseNaira("91329.65"), remainingMonths: 9, nextDue: "2026-10-31" }]);
+    expect(r.issues.map((i) => i.line)).toEqual([3, 4]);
+  });
+});
