@@ -18,6 +18,7 @@ export default async function PortalLayout({ children }: { children: React.React
     { href: "/my", label: "Home", icon: "home" as const },
     { href: "/my/statement", label: "Statement", icon: "statement" as const },
     ...(society.modules.includes("loans") ? [{ href: "/my/apply", label: "Apply for a loan", icon: "loan" as const }] : []),
+    ...(society.modules.includes("savings") ? [{ href: "/my/withdraw", label: "Withdraw savings", icon: "withdraw" as const }] : []),
   ];
   return (
     <div

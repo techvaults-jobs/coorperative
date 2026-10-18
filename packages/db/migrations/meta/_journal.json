@@ -127,6 +127,20 @@
       "when": 1792275025182,
       "tag": "0017_outbound_messages_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792311247295,
+      "tag": "0018_withdrawals",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792311248199,
+      "tag": "0019_withdrawals_guardrails",
+      "breakpoints": true
     }
   ]
 }

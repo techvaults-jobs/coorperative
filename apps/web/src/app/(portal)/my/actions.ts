@@ -1,7 +1,7 @@
 "use server";
 
 import { parseNaira, type EligibilityCheck, type Kobo } from "@techvaults/core";
-import { applyForLoan, loanEligibility, LoanError, PermissionError, resolveGuarantors, withSociety } from "@techvaults/db";
+import { applyForLoan, loanEligibility, LoanError, PermissionError, requestWithdrawal, resolveGuarantors, WithdrawalError, withSociety } from "@techvaults/db";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
@@ -74,4 +74,19 @@ export async function applyOwnLoan(_prev: MemberApplyState, formData: FormData):
   }
   revalidatePath("/my");
   redirect(`/my/loans/${loanId}?applied=1`);
+}
+
+export async function requestOwnWithdrawal(_prev: MemberApplyState, formData: FormData): Promise<MemberApplyState> {
+  const me = await requirePortal();
+  const amount = amountOf(String(formData.get("amount") ?? ""));
+  if (!amount) return { ok: false, message: "Enter how much you'd like to withdraw." };
+  try {
+    await withSociety(db(), me.society.societyId, (tx) =>
+      requestWithdrawal(tx, me.actor, { memberId: me.memberId, productId: String(formData.get("productId") ?? ""), amount, reason: String(formData.get("reason") ?? "") }),
+    );
+  } catch (e) {
+    return { ok: false, message: e instanceof WithdrawalError || e instanceof PermissionError ? e.message : "Something went wrong and nothing was sent. Try again." };
+  }
+  revalidatePath("/my/withdraw");
+  return { ok: true, message: "Request sent. An officer will review it; you'll be paid after the notice period." };
 }

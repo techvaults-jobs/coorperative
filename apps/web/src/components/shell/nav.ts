@@ -1,5 +1,5 @@
 import type { Module, Permission } from "@techvaults/core";
-import { BookOpen, ClipboardCheck, FileBarChart, FileSpreadsheet, HandCoins, LayoutDashboard, Package, Scale, Settings, ShieldCheck, UserCog, Users, type LucideIcon } from "lucide-react";
+import { Banknote, BookOpen, ClipboardCheck, FileBarChart, FileSpreadsheet, HandCoins, LayoutDashboard, Package, Scale, Settings, ShieldCheck, UserCog, Users, type LucideIcon } from "lucide-react";
 
 export interface NavItem {
   href: string;
@@ -16,8 +16,11 @@ export const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   { label: "", items: [{ href: "/overview", label: "Overview", icon: LayoutDashboard, keywords: "dashboard home" }] },
   { label: "Membership", items: [{ href: "/members", label: "Members", icon: Users, anyOf: ["members.read"], keywords: "register people" }] },
   {
-    label: "Lending",
-    items: [{ href: "/loans", label: "Loans", icon: HandCoins, anyOf: ["loans.prepare", "loans.approve", "ledger.read"], module: "loans", keywords: "credit borrow applications repayments arrears" }],
+    label: "Lending & savings",
+    items: [
+      { href: "/loans", label: "Loans", icon: HandCoins, anyOf: ["loans.prepare", "loans.approve", "ledger.read"], module: "loans", keywords: "credit borrow applications repayments arrears" },
+      { href: "/withdrawals", label: "Withdrawals", icon: Banknote, anyOf: ["ledger.prepare", "ledger.approve", "members.write", "ledger.read"], module: "savings", keywords: "withdraw savings payout" },
+    ],
   },
   {
     label: "Finance",

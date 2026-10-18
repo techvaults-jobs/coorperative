@@ -433,6 +433,14 @@ try {
   check("the member downloads their own statement", (await member.getByText(/Statement · Funmilayo Ogunleye/).count()) > 0);
   await member.goto(`${BASE}/my/apply`, { waitUntil: "networkidle" });
   check("the member can start a loan application", (await member.getByText("Do I qualify?").count()) === 1);
+  await member.goto(`${BASE}/my/withdraw`, { waitUntil: "networkidle" });
+  await member.fill("#amount", "5000");
+  await member.fill("#reason", "E2E withdrawal");
+  await member.getByRole("button", { name: "Send request" }).click();
+  await member.getByText("Request sent.").waitFor({ timeout: 10000 });
+  check("a member asks to withdraw savings from the portal", true);
+  await page.goto(`${BASE}/withdrawals?tab=decide`, { waitUntil: "networkidle" });
+  check("officers see the request awaiting a decision", (await page.locator("text=E2E withdrawal").count()) === 1);
   await memberContext.close();
 
   // Staff console: onboard a society; email is held in the outbox when no provider is set up

@@ -14,4 +14,5 @@ export * from "./services/leads.js";
 export * from "./services/platform.js";
 export * from "./services/importing.js";
 export * from "./services/outbox.js";
+export * from "./services/withdrawals.js";
 export * from "./services/societies.js";
