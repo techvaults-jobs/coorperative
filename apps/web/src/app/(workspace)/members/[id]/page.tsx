@@ -26,7 +26,7 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
   if (!hasPermission(ws, "members.read")) return <EmptyState title="Your role doesn't include the member register." />;
   const { id } = await params;
   const { terminology: terms, modules } = await requireSociety();
-  const showContributions = hasPermission(ws, "payroll.manage") || hasPermission(ws, "members.read");
+  const showContributions = hasPermission(ws, "payroll.manage") || hasPermission(ws, "collections.manage") || hasPermission(ws, "members.read");
   const showLoans = modules.includes("loans") && (hasPermission(ws, "loans.prepare") || hasPermission(ws, "loans.approve") || hasPermission(ws, "ledger.read"));
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
   const data = await inSociety(ws, async (tx) => {
@@ -121,13 +121,17 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
       {savingProducts.length > 0 && (
         <Card>
           <CardHeader
-            title="Monthly contributions"
-            description={`Standing amounts that go on the ${terms.contribution.toLowerCase()} schedule each month.`}
+            title={modules.includes("payroll") ? "Monthly contributions" : "Usual contributions"}
+            description={
+              modules.includes("payroll")
+                ? `Standing amounts that go on the ${terms.contribution.toLowerCase()} schedule each month.`
+                : "Pre-filled on each meeting's collection sheet; change the sheet when a member pays something different."
+            }
           />
           <CardBody>
             <ContributionsForm
               memberId={member.id}
-              canEdit={hasPermission(ws, "payroll.manage")}
+              canEdit={hasPermission(ws, "payroll.manage") || hasPermission(ws, "collections.manage")}
               products={savingProducts.map((p) => {
                 const c = contributions.find((x) => x.productId === p.id);
                 return { id: p.id, name: p.name, amount: c ? (Number(c.amount) / 100).toFixed(2) : "" };

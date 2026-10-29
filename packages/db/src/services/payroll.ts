@@ -53,7 +53,7 @@ export interface ContributionView {
 }
 
 export async function listContributions(tx: Tx, actor: Actor, opts: { memberId?: string } = {}): Promise<ContributionView[]> {
-  if (!can(actor.roles, "payroll.manage") && !can(actor.roles, "members.read")) throw new PermissionError("Your role cannot view contributions");
+  if (!can(actor.roles, "payroll.manage") && !can(actor.roles, "collections.manage") && !can(actor.roles, "members.read")) throw new PermissionError("Your role cannot view contributions");
   const rows = await tx
     .select({ memberId: memberContributions.memberId, productId: products.id, productName: products.name, kind: products.kind, amount: memberContributions.amount })
     .from(memberContributions)
@@ -63,9 +63,10 @@ export async function listContributions(tx: Tx, actor: Actor, opts: { memberId?:
   return rows.map((r) => ({ ...r, kind: r.kind as "savings" | "shares", amount: kobo(r.amount) }));
 }
 
-/** Set (or with 0, remove) a member's standing monthly contribution to a savings or share product. */
+/** Set (or with 0, remove) a member's standing contribution to a savings or share product. */
 export async function setContribution(tx: Tx, actor: Actor, memberId: string, productId: string, amount: Kobo): Promise<void> {
-  requirePayroll(actor);
+  // Usual amounts feed both the payroll schedule and the collection sheet (D-027).
+  if (!can(actor.roles, "payroll.manage") && !can(actor.roles, "collections.manage")) throw new PermissionError("Your role cannot change contributions");
   const [product] = await tx.select().from(products).where(eq(products.id, productId));
   if (!product || product.kind === "loan" || product.status !== "active") throw new PayrollError("Choose an approved savings or share product.");
   const [before] = await tx.select().from(memberContributions).where(and(eq(memberContributions.memberId, memberId), eq(memberContributions.productId, productId)));

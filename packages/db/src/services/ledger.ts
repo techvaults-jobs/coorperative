@@ -246,6 +246,7 @@ export async function approveSubmission(tx: Tx, actor: Actor, submissionId: stri
 async function settleLoans(tx: Tx, submissionId: string, lines: { loanId?: string }[]) {
   await tx.execute(sql`update loans set status = 'active' where disbursement_submission_id = ${submissionId} and status = 'disbursing'`);
   await tx.execute(sql`update payroll_runs set status = 'posted' where submission_id = ${submissionId} and status = 'submitted'`);
+  await tx.execute(sql`update collection_sheets set status = 'posted' where submission_id = ${submissionId} and status = 'submitted'`);
   await tx.execute(sql`update withdrawals set status = 'paid' where payment_submission_id = ${submissionId} and status = 'paying'`);
   await tx.execute(sql`update financial_years set status = 'closed' where submission_id = ${submissionId} and status = 'closing'`);
   const loanIds = [...new Set(lines.flatMap((l) => (l.loanId ? [l.loanId] : [])))];
@@ -285,6 +286,8 @@ async function decide(tx: Tx, actor: Actor, submissionId: string, status: "rejec
   await tx.execute(sql`update withdrawals set status = 'approved', payment_submission_id = null where payment_submission_id = ${submissionId} and status = 'paying'`);
   // A payroll run whose posting was turned down goes back to reconciled, to fix and resubmit.
   await tx.execute(sql`update payroll_runs set status = 'reconciled', submission_id = null where submission_id = ${submissionId} and status = 'submitted'`);
+  // A collection sheet whose posting was turned down goes back to draft, to correct and resubmit.
+  await tx.execute(sql`update collection_sheets set status = 'draft', submission_id = null where submission_id = ${submissionId} and status = 'submitted'`);
   // A loan whose disbursement was turned down can be disbursed again.
   await tx.execute(sql`
     update loans set status = 'approved', disbursement_submission_id = null, disbursed_on = null, first_due_date = null

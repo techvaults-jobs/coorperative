@@ -10,6 +10,7 @@ export * from "./services/settings.js";
 export * from "./services/products.js";
 export * from "./services/loans.js";
 export * from "./services/payroll.js";
+export * from "./services/collections.js";
 export * from "./services/leads.js";
 export * from "./services/platform.js";
 export * from "./services/importing.js";

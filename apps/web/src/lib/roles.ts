@@ -8,6 +8,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   loan_officer: "Loan officer",
   loan_committee: "Loan committee",
   payroll_officer: "Payroll officer",
+  collector: "Collector",
   auditor: "Auditor",
   member: "Member",
 };
@@ -21,6 +22,7 @@ export const ROLE_HINTS: Partial<Record<Role, string>> = {
   loan_officer: "Prepares loan applications",
   loan_committee: "Approves loans",
   payroll_officer: "Manages payroll deduction files",
+  collector: "Records collections at meetings",
   auditor: "Read-only access to the ledger and audit trail",
 };
 

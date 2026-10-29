@@ -34,6 +34,8 @@ export const productStatus = pgEnum("product_status", ["proposed", "active", "re
 export const loanStatus = pgEnum("loan_status", ["applied", "approved", "rejected", "withdrawn", "disbursing", "active", "closed"]);
 export const payrollStatus = pgEnum("payroll_status", ["draft", "issued", "reconciled", "submitted", "posted"]);
 export const payrollItemKind = pgEnum("payroll_item_kind", ["loan", "savings", "shares"]);
+export const collectionStatus = pgEnum("collection_status", ["draft", "submitted", "posted"]);
+export const collectionKind = pgEnum("collection_kind", ["savings", "shares", "loan", "interest"]);
 export const withdrawalStatus = pgEnum("withdrawal_status", ["requested", "approved", "rejected", "cancelled", "paying", "paid"]);
 export const submissionStatus = pgEnum("submission_status", ["pending", "approved", "rejected", "withdrawn"]);
 
@@ -61,10 +63,13 @@ export const societies = pgTable("societies", {
   terminology: jsonb("terminology").$type<Record<string, string>>().notNull().default({}),
   /** Modules switched on. Null means the sector profile's defaults. */
   modules: text("modules").array(),
+  /** 0 (Sunday) to 6: the day collection meetings are held. Null allows any day. */
+  meetingWeekday: integer("meeting_weekday"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   check("societies_brand_color", sql`${t.brandColor} is null or ${t.brandColor} ~ '^#[0-9a-f]{6}$'`),
   check("societies_financial_year_start", sql`${t.financialYearStart} between 1 and 12`),
+  check("societies_meeting_weekday", sql`${t.meetingWeekday} is null or ${t.meetingWeekday} between 0 and 6`),
 ]);
 
 // Authentication tables follow the field names Better Auth expects. They are not
@@ -531,6 +536,61 @@ export const payrollRemittanceLines = pgTable(
 );
 
 /** Requests for a demo from the public website. Platform-level: not tied to any society. */
+/**
+ * One collection meeting (D-027): what each member paid into each column, what was received in
+ * cash and by transfer, and the journal submission that posts it.
+ */
+export const collectionSheets = pgTable(
+  "collection_sheets",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    societyId: uuid("society_id").notNull().references(() => societies.id),
+    meetingDate: date("meeting_date").notNull(),
+    status: collectionStatus("status").notNull().default("draft"),
+    cashCounted: bigint("cash_counted", { mode: "bigint" }),
+    transfers: bigint("transfers", { mode: "bigint" }),
+    bankAccountId: uuid("bank_account_id"),
+    /** Teller number or transfer reference for the lodgement. */
+    lodgementRef: text("lodgement_ref"),
+    /** Required when what was received differs from what was recorded. */
+    differenceNote: text("difference_note"),
+    createdBy: uuid("created_by").notNull().references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    submissionId: uuid("submission_id"),
+  },
+  (t) => [
+    uniqueIndex("collection_sheets_society_date").on(t.societyId, t.meetingDate),
+    unique("collection_sheets_society_id_id").on(t.societyId, t.id),
+    foreignKey({ columns: [t.societyId, t.bankAccountId], foreignColumns: [ledgerAccounts.societyId, ledgerAccounts.id] }),
+    foreignKey({ columns: [t.societyId, t.submissionId], foreignColumns: [journalSubmissions.societyId, journalSubmissions.id] }),
+    check("collection_sheets_cash", sql`${t.cashCounted} is null or ${t.cashCounted} >= 0`),
+    check("collection_sheets_transfers", sql`${t.transfers} is null or ${t.transfers} >= 0`),
+  ],
+);
+
+export const collectionLines = pgTable(
+  "collection_lines",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    societyId: uuid("society_id").notNull(),
+    sheetId: uuid("sheet_id").notNull(),
+    memberId: uuid("member_id").notNull(),
+    kind: collectionKind("kind").notNull(),
+    productId: uuid("product_id").notNull(),
+    loanId: uuid("loan_id"),
+    amount: bigint("amount", { mode: "bigint" }).notNull(),
+  },
+  (t) => [
+    foreignKey({ columns: [t.societyId, t.sheetId], foreignColumns: [collectionSheets.societyId, collectionSheets.id] }).onDelete("cascade"),
+    foreignKey({ columns: [t.societyId, t.memberId], foreignColumns: [members.societyId, members.id] }),
+    foreignKey({ columns: [t.societyId, t.productId], foreignColumns: [products.societyId, products.id] }),
+    foreignKey({ columns: [t.societyId, t.loanId], foreignColumns: [loans.societyId, loans.id] }),
+    index("collection_lines_sheet").on(t.sheetId),
+    check("collection_lines_amount", sql`${t.amount} > 0`),
+    check("collection_lines_loan", sql`(${t.kind} in ('loan', 'interest')) = (${t.loanId} is not null)`),
+  ],
+);
+
 export const demoRequests = pgTable("demo_requests", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),

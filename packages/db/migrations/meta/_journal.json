@@ -169,6 +169,20 @@
       "when": 1792331613301,
       "tag": "0023_role_grants_guardrails",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1793283887060,
+      "tag": "0024_collections",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1793283910670,
+      "tag": "0025_collections_guardrails",
+      "breakpoints": true
     }
   ]
 }
