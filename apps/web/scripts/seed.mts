@@ -429,7 +429,7 @@ const communitySociety: SocietyDef = {
     const approver: Actor = { userId: chairLink!.userId, societyId: actor.societyId, roles: CHAIR_ROLES };
     const officer: Actor = { ...actor, roles: [...ADMIN_ROLES, "loan_officer"] };
 
-    const people = [];
+    const people: Awaited<ReturnType<typeof createMember>>[] = [];
     for (const [i, name] of COMMUNITY_MEMBERS.entries()) {
       people.push(await createMember(tx, officer, { memberNo: String(i + 1), fullName: name, status: "active", joinedOn: "2024-01-08" }));
     }
