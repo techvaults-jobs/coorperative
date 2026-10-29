@@ -172,8 +172,8 @@ This is unchanged (D-025). The weekly cycle stops at the closed year's last meet
 
 ## 12.5 What we build, in order
 
-1. **Collection cycle** (W2–W3): calendar, collection sheet grid, cash and lodgement check, posting. This generalises the payroll run (D-020). Payroll is "employer remits a lump sum"; collection is "member pays each column".
-2. **Flexible weekly loan strategy and monthly interest run** (W4–W5).
+1. **Collection cycle** (W2–W3): calendar, collection sheet grid, cash and lodgement check, posting. This generalises the payroll run (D-020). Payroll is "employer remits a lump sum"; collection is "member pays each column". **Built** (D-027).
+2. **Flexible weekly loan strategy and monthly interest run** (W4–W5). **Built** (D-028, D-031): *Loans → Loan interest* holds the monthly register; the demo seed has a community society with weekly loans and two charged months.
 3. **Loan classification and follow-up list** (W6).
 4. **Workbook import** (W1): column mapping that reads the SUMMARY sheet directly, with a reconciliation preview.
 5. **Community report pack** (W8) with Excel export in the workbook's layout.
@@ -186,3 +186,4 @@ This is unchanged (D-025). The weekly cycle stops at the closed year's last meet
 4. What does the society count as non-performing today? The 19 marked loans should be compared with the default rule in W6.
 5. Who may collect, and must cash be banked the same day?
 6. Should members be charged a fee for missed weeks?
+7. Does a loan paid out late in a month pay that whole month's interest (today's default, as in the workbook), or a part-month share?

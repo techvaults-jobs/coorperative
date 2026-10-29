@@ -1,5 +1,5 @@
-import { formatNaira } from "@techvaults/core";
-import { getLoan, withSociety } from "@techvaults/db";
+import { formatNaira, isFlexible } from "@techvaults/core";
+import { getLoan, loanInterestCharges, withSociety } from "@techvaults/db";
 import { notFound } from "next/navigation";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -7,6 +7,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat";
 import { Table, Td, Th } from "@/components/ui/table";
+import { WeeklyLoanCards } from "@/components/loans/weekly-loan";
 import { db } from "@/lib/db";
 import { LOAN_STATUS } from "@/lib/loan-status";
 import { requirePortal } from "@/lib/session";
@@ -19,8 +20,14 @@ export default async function MyLoanPage({ params, searchParams }: { params: Pro
   const { applied } = await searchParams;
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
   // listLoans limits a member to their own loans, so someone else's loan is simply not found.
-  const loan = await withSociety(db(), me.society.societyId, (tx) => getLoan(tx, me.actor, id));
-  if (!loan) notFound();
+  const data = await withSociety(db(), me.society.societyId, async (tx) => {
+    const loan = await getLoan(tx, me.actor, id);
+    // Charges are read only once getLoan has confirmed the loan is the member's own.
+    return loan ? { loan, charges: isFlexible(loan.policy.interestMethod) ? await loanInterestCharges(tx, me.actor, id) : [] } : null;
+  });
+  if (!data) notFound();
+  const { loan, charges } = data;
+  const flexible = isFlexible(loan.policy.interestMethod);
   const pos = loan.position;
   let paid = pos.principalRepaid + pos.interestPaid;
   const today = new Date().toISOString().slice(0, 10);
@@ -43,6 +50,9 @@ export default async function MyLoanPage({ params, searchParams }: { params: Pro
         <StatCard label="Overdue" value={formatNaira(pos.arrears)} footnote={pos.daysPastDue ? `${pos.daysPastDue} days` : "Nothing overdue"} />
         <StatCard label="Next payment" value={pos.nextDue ? formatNaira(pos.nextDue.amount) : "—"} footnote={pos.nextDue ? `due ${pos.nextDue.dueDate}` : undefined} />
       </section>
+      {flexible ? (
+        <WeeklyLoanCards position={pos} charges={charges} termMonths={loan.termMonths} annualRateBps={loan.policy.annualRateBps} audience="member" />
+      ) : (
       <Card>
         <CardHeader title="Repayment schedule" />
         <CardBody className="pt-4">
@@ -85,6 +95,7 @@ export default async function MyLoanPage({ params, searchParams }: { params: Pro
           )}
         </CardBody>
       </Card>
+      )}
     </>
   );
 }

@@ -44,6 +44,8 @@ export interface Preview {
   fee: string;
   totalInterest: string | null;
   totalRepayable: string | null;
+  /** Flexible weekly loans: the expected weekly repayment and the first month's interest. */
+  weekly: { repayment: string; firstMonthInterest: string } | null;
   instalments: { number: number; dueDate: string; payment: string; principal: string; interest: string; balance: string }[];
 }
 
@@ -61,6 +63,7 @@ export async function previewLoan(input: { memberId: string; productId: string; 
       fee: r.fee.toString(),
       totalInterest: r.schedule?.totalInterest.toString() ?? null,
       totalRepayable: r.schedule?.totalRepayable.toString() ?? null,
+      weekly: r.weekly ? { repayment: r.weekly.repayment.toString(), firstMonthInterest: r.weekly.firstMonthInterest.toString() } : null,
       instalments: (r.schedule?.instalments ?? []).map((i) => ({
         number: i.number,
         dueDate: i.dueDate,

@@ -1,6 +1,6 @@
-import { formatNaira } from "@techvaults/core";
+import { formatNaira, isFlexible } from "@techvaults/core";
 import { listLoans, portfolioSummary, type LoanStatus } from "@techvaults/db";
-import { AlertTriangle, HandCoins, Hourglass, Plus, Wallet } from "lucide-react";
+import { AlertTriangle, HandCoins, Hourglass, Percent, Plus, Wallet } from "lucide-react";
 import Link from "next/link";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -39,12 +39,20 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
         title="Loans"
         description="Applications are checked against each product's approved policy. A committee member approves, and every disbursement and repayment goes through journal approval."
         actions={
-          hasPermission(ws, "loans.prepare") && (
-            <Link href="/loans/new" className={buttonClass("primary")}>
-              <Plus className="size-4" aria-hidden />
-              New application
-            </Link>
-          )
+          <>
+            {loans.some((l) => isFlexible(l.policy.interestMethod)) && (
+              <Link href="/loans/interest" className={buttonClass("secondary")}>
+                <Percent className="size-4" aria-hidden />
+                Monthly interest
+              </Link>
+            )}
+            {hasPermission(ws, "loans.prepare") && (
+              <Link href="/loans/new" className={buttonClass("primary")}>
+                <Plus className="size-4" aria-hidden />
+                New application
+              </Link>
+            )}
+          </>
         }
       />
       <section aria-label="Portfolio" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

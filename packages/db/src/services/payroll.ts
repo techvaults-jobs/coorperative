@@ -350,7 +350,7 @@ export async function submitPayrollRun(tx: Tx, actor: Actor, runId: string, inpu
       const [loan] = await tx.select().from(loans).where(eq(loans.id, item.loanId!));
       const split = await splitRepayment(tx, loan!, amount, date);
       if (split.principal > 0n) lines.push({ accountId: product.accountId, side: "credit", amount: split.principal, memberId: item.memberId, loanId: loan!.id });
-      if (split.interest > 0n) lines.push({ accountId: product.incomeAccountId!, side: "credit", amount: split.interest, loanId: loan!.id, memo: "Interest" });
+      if (split.interest > 0n) lines.push({ accountId: split.interestAccountId, side: "credit", amount: split.interest, loanId: loan!.id, memo: "Interest" });
     } else {
       lines.push({ accountId: product.accountId, side: "credit", amount, memberId: item.memberId });
     }

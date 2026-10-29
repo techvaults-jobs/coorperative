@@ -9,11 +9,16 @@
  * the admin prepares each entry and a demo chairperson approves it. The chairperson has no
  * password and cannot sign in; invite a real approver from the Officers page.
  */
-import { DEFAULT_LOAN_POLICY, DEFAULT_SAVINGS_POLICY, DEFAULT_SHARES_POLICY, parseNaira, type Kobo, type Role } from "@techvaults/core";
+import { DEFAULT_LOAN_POLICY, DEFAULT_SAVINGS_POLICY, DEFAULT_SHARES_POLICY, kobo, parseNaira, type Kobo, type Role } from "@techvaults/core";
 import {
   applyForLoan,
   approveProductPolicy,
   approveSubmission,
+  collectionSheet,
+  createCollectionSheet,
+  saveCollectionSheet,
+  submitCollectionSheet,
+  submitInterestRun,
   createAccount,
   createDb,
   createMember,
@@ -370,6 +375,188 @@ const farmSociety: SocietyDef = {
 };
 
 // ---------------------------------------------------------------------------
+// 3. A community thrift society that collects at a weekly meeting (D-027, D-028)
+
+const COMMUNITY_MEMBERS = [
+  "Abike Demo-Adisa",
+  "Bisola Demo-Okafor",
+  "Chidi Demo-Umeh",
+  "Dupe Demo-Salami",
+  "Emeka Demo-Obi",
+  "Folake Demo-Ajayi",
+  "Gbenga Demo-Lawal",
+  "Hauwa Demo-Sani",
+  "Ike Demo-Nnamdi",
+  "Jide Demo-Oladipo",
+  "Kemi Demo-Fashola",
+  "Lami Demo-Yusuf",
+] as const;
+
+/** Mondays from the first to the last date given, inclusive. */
+function mondays(from: string, to: string): string[] {
+  const out: string[] = [];
+  for (let d = new Date(`${from}T00:00:00Z`); d.toISOString().slice(0, 10) <= to; d.setUTCDate(d.getUTCDate() + 7)) out.push(d.toISOString().slice(0, 10));
+  return out;
+}
+
+const communitySociety: SocietyDef = {
+  slug: "demo-community-thrift",
+  values: {
+    name: "Demo Community Thrift Society (synthetic data)",
+    state: "Oyo",
+    registrar: "Oyo State Director of Co-operatives",
+    registrationNumber: "DEMO-0002",
+    sector: "credit_union",
+    terminology: { externalId: "Card no.", group: "Zone", contribution: "Weekly contribution" },
+    meetingWeekday: 1,
+  },
+  accounts: [
+    ["1100", "Bank – current account", "asset", false],
+    ["1200", "Cash in hand", "asset", false],
+    ["1300", "Members' loans", "asset", true],
+    ["1400", "Interest receivable on loans", "asset", false],
+    ["2100", "Members' ordinary savings", "liability", true],
+    ["2200", "Members' building fund", "liability", true],
+    ["2900", "Unidentified remittances (suspense)", "liability", false],
+    ["3100", "Members' share capital", "equity", true],
+    ["3200", "Statutory reserve fund (Act s.34)", "equity", false],
+    ["3900", "Opening balances", "equity", false],
+    ["4200", "Interest on loans", "income", false],
+    ["5200", "Stationery and printing", "expense", false],
+  ],
+  async populate({ tx, actor, acct, post }) {
+    const [chairLink] = await tx.select().from(schema.societyUsers).where(sql`society_id = ${actor.societyId} and roles && array['chairperson']`);
+    const approver: Actor = { userId: chairLink!.userId, societyId: actor.societyId, roles: CHAIR_ROLES };
+    const officer: Actor = { ...actor, roles: [...ADMIN_ROLES, "loan_officer"] };
+
+    const people = [];
+    for (const [i, name] of COMMUNITY_MEMBERS.entries()) {
+      people.push(await createMember(tx, officer, { memberNo: String(i + 1), fullName: name, status: "active", joinedOn: "2024-01-08" }));
+    }
+
+    // Products: the workbook's four columns, and its 1.5%-a-month weekly loan.
+    const propose = (input: Parameters<typeof proposeProduct>[2]) => proposeProduct(tx, officer, input);
+    const savingsId = await propose({ kind: "savings", code: "ORD-SAV", name: "Saving", accountId: acct("2100"), policy: { ...DEFAULT_SAVINGS_POLICY, minimumContribution: parseNaira("500"), withdrawalNoticeDays: 14 } });
+    const buildingId = await propose({
+      kind: "savings",
+      code: "BLD-FUND",
+      name: "Building",
+      description: "Saved towards the society's building project; repaid on exit.",
+      accountId: acct("2200"),
+      policy: { ...DEFAULT_SAVINGS_POLICY, minimumContribution: kobo(0), withdrawable: false },
+    });
+    const sharesId = await propose({ kind: "shares", code: "ORD-SHR", name: "Share", accountId: acct("3100"), policy: { ...DEFAULT_SHARES_POLICY, sharePrice: parseNaira("500"), minimumShares: 2 } });
+    const loanId = await propose({
+      kind: "loan",
+      code: "WK-LOAN",
+      name: "Weekly loan",
+      description: "Repaid in any amount at the weekly meeting; 1.5% a month on the balance. Illustrative terms.",
+      accountId: acct("1300"),
+      incomeAccountId: acct("4200"),
+      policy: {
+        ...DEFAULT_LOAN_POLICY,
+        interestMethod: "flexible_weekly",
+        annualRateBps: 1800,
+        minTermMonths: 1,
+        maxTermMonths: 24,
+        minAmount: parseNaira("10000"),
+        maxAmount: parseNaira("1000000"),
+        savingsMultiple: 2,
+        guarantorsRequired: 1,
+        processingFeeBps: 0,
+        minMembershipMonths: 3,
+      },
+    });
+    for (const id of [savingsId, buildingId, sharesId, loanId]) await approveProductPolicy(tx, approver, id);
+
+    // Balances brought across from the workbook at cut-over.
+    const opening = (i: number) => ({ savings: parseNaira(String(150000 + i * 25000)), building: parseNaira(String(20000 + i * 2500)), shares: parseNaira("10000") });
+    await post({
+      entryDate: "2026-07-31",
+      description: "Members' opening balances as at 2026-07-31",
+      idempotencyKey: "seed:community:opening",
+      lines: [
+        ...people.flatMap((m, i) => {
+          const o = opening(i);
+          return [
+            { accountId: acct("2100"), side: "credit" as const, amount: o.savings, memberId: m.id },
+            { accountId: acct("2200"), side: "credit" as const, amount: o.building, memberId: m.id },
+            { accountId: acct("3100"), side: "credit" as const, amount: o.shares, memberId: m.id },
+          ];
+        }),
+        { accountId: acct("1100"), side: "debit", amount: kobo(people.reduce((s, _m, i) => s + opening(i).savings + opening(i).building + opening(i).shares, 0n)) },
+      ],
+    });
+
+    // Usual weekly amounts pre-fill each meeting's sheet.
+    for (const [i, m] of people.entries()) {
+      await setContribution(tx, officer, m.id, savingsId, parseNaira(String(2000 + (i % 4) * 1000)));
+      await setContribution(tx, officer, m.id, buildingId, parseNaira("500"));
+      await setContribution(tx, officer, m.id, sharesId, parseNaira(i % 3 === 0 ? "500" : "0"));
+    }
+
+    // Four weekly loans paid out on 3 August, guaranteed by the next card.
+    const loans: { memberIndex: number; id: string }[] = [];
+    for (const [memberIndex, naira, months, purpose] of [
+      [0, "300000", 12, "Restocking the shop"],
+      [2, "250000", 10, "Sewing machine"],
+      [4, "300000", 12, "Rent"],
+      [7, "150000", 6, "School fees"],
+    ] as const) {
+      const loan = await applyForLoan(tx, officer, { memberId: people[memberIndex]!.id, productId: loanId, amount: parseNaira(naira), termMonths: months, purpose, guarantorIds: [people[memberIndex + 1]!.id] });
+      await decideLoan(tx, approver, loan.id, "approve", "Within policy");
+      const d = await disburseLoan(tx, officer, loan.id, { disbursedOn: "2026-08-03", firstDueDate: "2026-08-10", bankAccountId: acct("1100"), idempotencyKey: `seed:community:disburse:${memberIndex}` });
+      await approveSubmission(tx, approver, d.submissionId);
+      loans.push({ memberIndex, id: loan.id });
+    }
+
+    // Weekly meetings. Each month's interest is charged once its meetings are posted.
+    const meetings = mondays("2026-08-10", "2026-10-26");
+    let charged = "2026-07";
+    let posted = 0;
+    for (const [n, date] of meetings.entries()) {
+      const month = date.slice(0, 7);
+      const previous = `${month.slice(0, 4)}-${String(Number(month.slice(5)) - 1).padStart(2, "0")}`;
+      if (previous > charged && previous >= "2026-08") {
+        const run = await submitInterestRun(tx, officer, { period: previous, idempotencyKey: `seed:community:interest:${previous}` });
+        await approveSubmission(tx, approver, run.submissionId);
+        charged = previous;
+      }
+      const sheetId = await createCollectionSheet(tx, officer, { meetingDate: date });
+      // The latest meeting stays open, as it would be on the evening it was held.
+      if (n === meetings.length - 1) break;
+      const sheet = (await collectionSheet(tx, officer, sheetId))!;
+      const entries = sheet.rows.flatMap((r) => {
+        const i = people.findIndex((p) => p.id === r.memberId);
+        // Card 8 stops coming after August, so their loan falls behind; card 11 misses odd weeks.
+        if ((i === 7 && date > "2026-08-31") || (i === 10 && n % 2 === 1)) return [];
+        const amounts = { ...r.amounts };
+        // Card 3 pays half the interest due, leaving interest arrears.
+        if (i === 2 && amounts.interest) amounts.interest = kobo(amounts.interest / 2n);
+        // Card 1 pays extra towards the loan in September.
+        if (i === 0 && month === "2026-09" && amounts.loan) amounts.loan = kobo(amounts.loan + parseNaira("5000"));
+        return [{ memberId: r.memberId, amounts }];
+      });
+      const saved = await saveCollectionSheet(tx, officer, sheetId, entries);
+      if (saved.problems.length) throw new Error(`Seed meeting ${date}: ${saved.problems.map((p) => p.message).join("; ")}`);
+      const total = kobo((await collectionSheet(tx, officer, sheetId))!.total);
+      const transfers = kobo(n % 3 === 0 ? parseNaira("6000") : 0n);
+      const s = await submitCollectionSheet(tx, officer, sheetId, {
+        cashCounted: kobo(total - transfers),
+        transfers,
+        bankAccountId: acct("1100"),
+        lodgementRef: `TLR-${date.replaceAll("-", "")}`,
+        differenceNote: "",
+        idempotencyKey: `seed:community:sheet:${date}`,
+      });
+      await approveSubmission(tx, approver, s.submissionId);
+      posted++;
+    }
+    return `${people.length} members, ${loans.length} weekly loans, ${posted} posted meetings and one open sheet, interest charged to ${charged}`;
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Products and sample loans. Runs for existing demo societies too, and only adds what's missing.
 
 async function seedProducts(slug: string, loanName: string, sampleLoans: boolean) {
@@ -484,6 +671,7 @@ try {
   await seedPlatformStaff();
   await seedSociety(staffSociety);
   await seedSociety(farmSociety);
+  await seedSociety(communitySociety);
   await seedProducts(staffSociety.slug, "Regular loan", false);
   await seedProducts(farmSociety.slug, "Input loan", true);
   await seedContributions(staffSociety.slug);

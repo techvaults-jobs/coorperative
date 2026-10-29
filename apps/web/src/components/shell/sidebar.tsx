@@ -21,6 +21,12 @@ export interface ShellProps {
 
 export function SidebarContent({ current, societies, permissions, modules, pendingApprovals, onNavigate }: ShellProps & { onNavigate?: () => void }) {
   const pathname = usePathname();
+  const groups = visibleGroups(permissions, modules);
+  // The most specific link wins, so /loans/interest highlights "Loan interest", not "Loans".
+  const activeHref = groups
+    .flatMap((g) => g.items.map((i) => i.href))
+    .filter((href) => pathname === href || pathname.startsWith(`${href}/`))
+    .sort((a, b) => b.length - a.length)[0];
   return (
     <div className="flex h-full flex-col gap-6 px-3 py-5">
       <Link href="/overview" className="px-2" onClick={onNavigate}>
@@ -59,11 +65,11 @@ export function SidebarContent({ current, societies, permissions, modules, pendi
       </div>
 
       <nav aria-label="Main" className="flex flex-1 flex-col gap-5 overflow-y-auto">
-        {visibleGroups(permissions, modules).map((group) => (
+        {groups.map((group) => (
           <div key={group.label || "home"} className="flex flex-col gap-0.5">
             {group.label && <p className="text-sidebar-muted px-2.5 pb-1.5 text-[10px] font-semibold tracking-widest uppercase">{group.label}</p>}
             {group.items.map(({ href, label, icon: Icon }) => {
-              const active = pathname === href || pathname.startsWith(`${href}/`);
+              const active = href === activeHref;
               return (
                 <Link
                   key={href}

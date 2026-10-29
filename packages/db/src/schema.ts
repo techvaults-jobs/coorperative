@@ -36,6 +36,7 @@ export const payrollStatus = pgEnum("payroll_status", ["draft", "issued", "recon
 export const payrollItemKind = pgEnum("payroll_item_kind", ["loan", "savings", "shares"]);
 export const collectionStatus = pgEnum("collection_status", ["draft", "submitted", "posted"]);
 export const collectionKind = pgEnum("collection_kind", ["savings", "shares", "loan", "interest"]);
+export const interestRunStatus = pgEnum("interest_run_status", ["submitted", "posted", "abandoned"]);
 export const withdrawalStatus = pgEnum("withdrawal_status", ["requested", "approved", "rejected", "cancelled", "paying", "paid"]);
 export const submissionStatus = pgEnum("submission_status", ["pending", "approved", "rejected", "withdrawn"]);
 
@@ -588,6 +589,60 @@ export const collectionLines = pgTable(
     index("collection_lines_sheet").on(t.sheetId),
     check("collection_lines_amount", sql`${t.amount} > 0`),
     check("collection_lines_loan", sql`(${t.kind} in ('loan', 'interest')) = (${t.loanId} is not null)`),
+  ],
+);
+
+/**
+ * A month's interest charge on flexible weekly loans (D-028): each loan's outstanding principal
+ * at the end of the month, the charge on it, and the journal submission that posts it
+ * (Dr Interest receivable, Cr Interest income). A run whose posting is turned down is
+ * abandoned, and the month can be charged again.
+ */
+export const interestRuns = pgTable(
+  "interest_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    societyId: uuid("society_id").notNull().references(() => societies.id),
+    /** YYYY-MM */
+    period: text("period").notNull(),
+    /** The date the charge is made on: the month's last day. */
+    chargeDate: date("charge_date").notNull(),
+    status: interestRunStatus("status").notNull().default("submitted"),
+    total: bigint("total", { mode: "bigint" }).notNull(),
+    createdBy: uuid("created_by").notNull().references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    submissionId: uuid("submission_id").notNull(),
+  },
+  (t) => [
+    // One live run per month; abandoned runs stay as history.
+    uniqueIndex("interest_runs_society_period").on(t.societyId, t.period).where(sql`status <> 'abandoned'`),
+    unique("interest_runs_society_id_id").on(t.societyId, t.id),
+    foreignKey({ columns: [t.societyId, t.submissionId], foreignColumns: [journalSubmissions.societyId, journalSubmissions.id] }),
+    check("interest_runs_period", sql`${t.period} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`),
+    check("interest_runs_total", sql`${t.total} > 0`),
+  ],
+);
+
+export const interestCharges = pgTable(
+  "interest_charges",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    societyId: uuid("society_id").notNull(),
+    runId: uuid("run_id").notNull(),
+    loanId: uuid("loan_id").notNull(),
+    memberId: uuid("member_id").notNull(),
+    /** Outstanding principal on the charge date. */
+    balance: bigint("balance", { mode: "bigint" }).notNull(),
+    /** The loan's annual rate in basis points; a month's charge is a twelfth (1800 = 1.5% a month). */
+    annualRateBps: integer("annual_rate_bps").notNull(),
+    amount: bigint("amount", { mode: "bigint" }).notNull(),
+  },
+  (t) => [
+    foreignKey({ columns: [t.societyId, t.runId], foreignColumns: [interestRuns.societyId, interestRuns.id] }),
+    foreignKey({ columns: [t.societyId, t.loanId], foreignColumns: [loans.societyId, loans.id] }),
+    foreignKey({ columns: [t.societyId, t.memberId], foreignColumns: [members.societyId, members.id] }),
+    uniqueIndex("interest_charges_run_loan").on(t.runId, t.loanId),
+    check("interest_charges_amount", sql`${t.amount} > 0 and ${t.balance} > 0`),
   ],
 );
 

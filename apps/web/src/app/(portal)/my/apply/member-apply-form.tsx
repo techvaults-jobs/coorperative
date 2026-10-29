@@ -104,6 +104,19 @@ export function MemberApplyForm({ products }: { products: Product[] }) {
                 ))}
               </ul>
             )}
+            {preview?.weekly && (
+              <dl className="border-border mt-4 grid grid-cols-2 gap-3 border-t pt-4 text-sm">
+                <div>
+                  <dt className="text-muted text-xs">Expected each week</dt>
+                  <dd className="font-semibold tabular-nums">{money(preview.weekly.repayment)}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted text-xs">First month&apos;s interest</dt>
+                  <dd className="font-semibold tabular-nums">{money(preview.weekly.firstMonthInterest)}</dd>
+                </div>
+                <p className="text-muted col-span-2 text-xs">Pay any amount at each meeting. Interest is charged each month on what you still owe.</p>
+              </dl>
+            )}
             {preview?.payment && (
               <dl className="border-border mt-4 grid grid-cols-2 gap-3 border-t pt-4 text-sm">
                 <div>

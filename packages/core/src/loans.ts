@@ -8,14 +8,18 @@
  */
 import { divideRounded, kobo, type Kobo } from "./money.js";
 
-export const INTEREST_METHODS = ["flat", "reducing_balance", "equal_principal"] as const;
+export const INTEREST_METHODS = ["flat", "reducing_balance", "equal_principal", "flexible_weekly"] as const;
 export type InterestMethod = (typeof INTEREST_METHODS)[number];
 
 export const INTEREST_METHOD_LABELS: Record<InterestMethod, { label: string; description: string }> = {
   flat: { label: "Flat rate", description: "Interest on the original amount for the whole term, spread evenly." },
   reducing_balance: { label: "Reducing balance (equal instalments)", description: "Interest on what's still owed; every instalment is the same." },
   equal_principal: { label: "Reducing balance (equal principal)", description: "Interest on what's still owed; principal is repaid evenly, so instalments fall over time." },
+  flexible_weekly: { label: "Flexible weekly", description: "Interest charged each month on what's still owed; members repay any amount at each meeting." },
 };
+
+/** Loans on the flexible weekly strategy (D-028) have no schedule: interest is charged by a monthly run. */
+export const isFlexible = (method: InterestMethod) => method === "flexible_weekly";
 
 export interface LoanPolicy {
   interestMethod: InterestMethod;
@@ -110,6 +114,7 @@ export function monthlyInterest(balance: bigint, annualRateBps: number): bigint 
  * and monthly after that.
  */
 export function buildSchedule(principal: Kobo, termMonths: number, method: InterestMethod, annualRateBps: number, firstDueDate: string): Schedule {
+  if (isFlexible(method)) throw new RangeError("Flexible weekly loans have no fixed schedule");
   if (principal <= 0n) throw new RangeError("Principal must be more than zero");
   if (!Number.isInteger(termMonths) || termMonths < 1 || termMonths > 120) throw new RangeError("Term must be 1–120 months");
   const n = BigInt(termMonths);
@@ -156,6 +161,70 @@ export function buildSchedule(principal: Kobo, termMonths: number, method: Inter
   const totalInterest = rows.reduce((s, r) => s + r.interest, 0n);
   return { instalments: rows, totalInterest: kobo(totalInterest), totalRepayable: kobo(principal + totalInterest) };
 }
+
+// ---------------------------------------------------------------------------
+// Flexible weekly loans (D-028)
+
+/** The term in weekly meetings: 12 months is 52 weeks. */
+export function termWeeks(termMonths: number): number {
+  return Math.max(1, Math.round((termMonths * 52) / 12));
+}
+
+/** The repayment expected at each meeting, for tracking only: principal ÷ term in weeks, rounded up. */
+export function expectedWeeklyRepayment(principal: Kobo, termMonths: number): Kobo {
+  return kobo(divideRounded(principal, BigInt(termWeeks(termMonths)), "up"));
+}
+
+const DAY = 86_400_000;
+const daysBetween = (from: string, to: string) => Math.round((Date.parse(to) - Date.parse(from)) / DAY);
+const addDays = (iso: string, days: number) => new Date(Date.parse(`${iso}T00:00:00Z`) + days * DAY).toISOString().slice(0, 10);
+
+export interface WeeklyProgress {
+  weekly: Kobo;
+  /** Principal expected to have been repaid by `asOf`. */
+  expected: Kobo;
+  /** Expected less repaid, never negative. */
+  behind: Kobo;
+  /** Whole weekly repayments behind. */
+  weeksBehind: number;
+  /** Days since the first meeting whose expected repayment isn't covered; 0 when up to date. */
+  daysPastDue: number;
+  /** The next meeting's expected repayment, when the loan isn't repaid. */
+  nextDue: { number: number; dueDate: string; amount: Kobo } | null;
+}
+
+/**
+ * How a flexible loan is doing against its expected weekly repayments, the first due on
+ * `firstDueDate` and one each week after. Members may pay more or less on any week; only the
+ * running total counts.
+ */
+export function weeklyProgress(principal: Kobo, termMonths: number, firstDueDate: string, repaid: bigint, asOf: string): WeeklyProgress {
+  const weekly = expectedWeeklyRepayment(principal, termMonths);
+  const elapsed = asOf < firstDueDate ? 0 : Math.floor(daysBetween(firstDueDate, asOf) / 7) + 1;
+  const owedBy = (weeks: number) => (BigInt(weeks) * weekly > principal ? principal : BigInt(weeks) * weekly);
+  const expected = owedBy(elapsed);
+  const behind = expected > repaid ? expected - repaid : 0n;
+  // The first meeting whose running expected total is more than what's been repaid.
+  const firstShort = Number(repaid / weekly) + 1;
+  const firstShortDate = addDays(firstDueDate, (firstShort - 1) * 7);
+  const daysPastDue = behind > 0n ? Math.max(1, daysBetween(firstShortDate, asOf)) : 0;
+  let nextDue: WeeklyProgress["nextDue"] = null;
+  if (repaid < principal) {
+    // The next meeting, or later if the member has paid ahead.
+    const next = Math.max(elapsed + 1, firstShort);
+    nextDue = { number: next, dueDate: addDays(firstDueDate, (next - 1) * 7), amount: kobo(owedBy(next) - repaid) };
+  }
+  return { weekly, expected: kobo(expected), behind: kobo(behind), weeksBehind: Number(behind / weekly), daysPastDue, nextDue };
+}
+
+/** The last day of a YYYY-MM month: the date a month's interest is charged on. */
+export function monthEnd(period: string): string {
+  const [y, m] = period.split("-").map(Number) as [number, number];
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+}
+
+/** The monthly rate a policy charges, in basis points: 1800 a year is 150 (1.5%) a month. */
+export const monthlyRateBps = (annualRateBps: number) => annualRateBps / 12;
 
 function row(i: number, firstDueDate: string, principal: bigint, interest: bigint, balance: bigint): Instalment {
   return {

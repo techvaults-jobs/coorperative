@@ -249,6 +249,7 @@ async function settleLoans(tx: Tx, submissionId: string, lines: { loanId?: strin
   await tx.execute(sql`update collection_sheets set status = 'posted' where submission_id = ${submissionId} and status = 'submitted'`);
   await tx.execute(sql`update withdrawals set status = 'paid' where payment_submission_id = ${submissionId} and status = 'paying'`);
   await tx.execute(sql`update financial_years set status = 'closed' where submission_id = ${submissionId} and status = 'closing'`);
+  await tx.execute(sql`update interest_runs set status = 'posted' where submission_id = ${submissionId} and status = 'submitted'`);
   const loanIds = [...new Set(lines.flatMap((l) => (l.loanId ? [l.loanId] : [])))];
   if (loanIds.length === 0) return;
   await tx.execute(sql`
@@ -257,6 +258,10 @@ async function settleLoans(tx: Tx, submissionId: string, lines: { loanId?: strin
       and (select coalesce(sum(case l.side when 'debit' then l.amount else -l.amount end), 0)
            from journal_lines l join products p on p.account_id = l.account_id
            where l.loan_id = loans.id and p.id = loans.product_id) <= 0
+      -- A flexible loan stays open until its charged interest is paid too (D-028).
+      and (select coalesce(sum(case l.side when 'debit' then l.amount else -l.amount end), 0)
+           from journal_lines l join ledger_accounts a on a.id = l.account_id
+           where l.loan_id = loans.id and a.society_id = loans.society_id and a.code = '1400') <= 0
   `);
 }
 
@@ -282,6 +287,8 @@ async function decide(tx: Tx, actor: Actor, submissionId: string, status: "rejec
     .where(eq(journalSubmissions.id, submissionId));
   // A year-end close that was turned down is abandoned; the year can be closed again.
   await tx.execute(sql`update financial_years set status = 'abandoned' where submission_id = ${submissionId} and status = 'closing'`);
+  // An interest run that was turned down is abandoned; the month can be charged again.
+  await tx.execute(sql`update interest_runs set status = 'abandoned' where submission_id = ${submissionId} and status = 'submitted'`);
   // A withdrawal whose payment was turned down can be paid again.
   await tx.execute(sql`update withdrawals set status = 'approved', payment_submission_id = null where payment_submission_id = ${submissionId} and status = 'paying'`);
   // A payroll run whose posting was turned down goes back to reconciled, to fix and resubmit.

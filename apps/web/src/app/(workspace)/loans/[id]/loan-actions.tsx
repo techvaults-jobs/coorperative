@@ -60,7 +60,22 @@ export function DecisionPanel({ loanId, canDecide, canWithdraw, mine }: { loanId
   );
 }
 
-export function DisbursePanel({ loanId, idempotencyKey, banks, today, fee }: { loanId: string; idempotencyKey: string; banks: Bank[]; today: string; fee: string }) {
+export function DisbursePanel({
+  loanId,
+  idempotencyKey,
+  banks,
+  today,
+  fee,
+  firstDue,
+}: {
+  loanId: string;
+  idempotencyKey: string;
+  banks: Bank[];
+  today: string;
+  fee: string;
+  /** Suggested first repayment date; the end of next month when not given. */
+  firstDue?: string;
+}) {
   const [state, action, pending] = useActionState<FormState, FormData>(disburseAction, { ok: false });
   const nextMonthEnd = (() => {
     const [y, m] = today.split("-").map(Number) as [number, number];
@@ -87,7 +102,7 @@ export function DisbursePanel({ loanId, idempotencyKey, banks, today, fee }: { l
               <Input id="disbursedOn" name="disbursedOn" type="date" defaultValue={today} required />
             </Field>
             <Field label="First repayment" htmlFor="firstDueDate">
-              <Input id="firstDueDate" name="firstDueDate" type="date" defaultValue={nextMonthEnd} required />
+              <Input id="firstDueDate" name="firstDueDate" type="date" defaultValue={firstDue ?? nextMonthEnd} required />
             </Field>
           </div>
           {state.message && <Alert tone="danger">{state.message}</Alert>}

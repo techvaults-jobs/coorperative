@@ -2,7 +2,7 @@
  * Bringing a society's existing records across: the member register and opening balances.
  * A preview shows every problem first; the import is all-or-nothing.
  */
-import { buildSchedule, can, kobo, loadLoanPolicy, parseLegacyLoansCsv, resolveTerminology, type StoredLoanPolicy, type Terminology, parseMembersCsv, parseOpeningBalancesCsv, type ImportIssue, type JournalLine, type Kobo, type MemberRow } from "@techvaults/core";
+import { buildSchedule, can, divideRounded, isFlexible, kobo, loadLoanPolicy, parseLegacyLoansCsv, resolveTerminology, type StoredLoanPolicy, type Terminology, parseMembersCsv, parseOpeningBalancesCsv, type ImportIssue, type JournalLine, type Kobo, type MemberRow } from "@techvaults/core";
 import { eq, inArray, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import type { Tx } from "../client.js";
@@ -186,8 +186,11 @@ export async function previewLegacyLoans(tx: Tx, actor: Actor, csv: string, asOf
       continue;
     }
     const policy = loadLoanPolicy(p!.policy as unknown as StoredLoanPolicy);
-    const schedule = buildSchedule(r.outstanding, r.remainingMonths, policy.interestMethod, policy.annualRateBps, r.nextDue);
-    out.push({ line: r.line, memberNo: m!.memberNo, memberName: m!.fullName, productCode: r.productCode, outstanding: r.outstanding, remainingMonths: r.remainingMonths, nextDue: r.nextDue, monthlyPayment: schedule.instalments[0]!.payment });
+    // Flexible weekly loans have no schedule: show the principal expected over a month instead.
+    const monthlyPayment = isFlexible(policy.interestMethod)
+      ? kobo(divideRounded(r.outstanding, BigInt(r.remainingMonths), "up"))
+      : buildSchedule(r.outstanding, r.remainingMonths, policy.interestMethod, policy.annualRateBps, r.nextDue).instalments[0]!.payment;
+    out.push({ line: r.line, memberNo: m!.memberNo, memberName: m!.fullName, productCode: r.productCode, outstanding: r.outstanding, remainingMonths: r.remainingMonths, nextDue: r.nextDue, monthlyPayment });
   }
   return { loans: out, total: kobo(out.reduce((s, l) => s + l.outstanding, 0n)), issues: issues.sort((a, b) => a.line - b.line) };
 }

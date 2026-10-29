@@ -166,6 +166,7 @@ const BASE_CHART: ChartAccount[] = [
   { code: "1100", name: "Bank – current account", class: "asset", memberControl: false },
   { code: "1200", name: "Cash in hand", class: "asset", memberControl: false },
   { code: "1300", name: "Members' loans", class: "asset", memberControl: true },
+  { code: "1400", name: "Interest receivable on loans", class: "asset", memberControl: false },
   { code: "2100", name: "Members' ordinary savings", class: "liability", memberControl: true },
   { code: "2900", name: "Unidentified remittances (suspense)", class: "liability", memberControl: false },
   { code: "3100", name: "Members' share capital", class: "equity", memberControl: true },

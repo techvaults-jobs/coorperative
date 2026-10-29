@@ -18,3 +18,4 @@ export * from "./services/outbox.js";
 export * from "./services/withdrawals.js";
 export * from "./services/yearend.js";
 export * from "./services/societies.js";
+export * from "./services/interest.js";
