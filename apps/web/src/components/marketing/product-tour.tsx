@@ -688,7 +688,7 @@ export function ProductTour() {
                 {/* Sidebar */}
                 <div className="bg-sidebar absolute inset-y-0 left-0" style={{ width: 200 }}>
                   <div className="flex items-center gap-2 px-4 pt-4">
-                    <LogoMark className="size-6" />
+                    <LogoMark tone="inverse" className="size-6" />
                     <span className="text-[12px] font-semibold text-white">Cooperative Vaults</span>
                   </div>
                   <div className="border-sidebar-border bg-sidebar-2 mx-3 mt-4 rounded-lg border p-2.5">

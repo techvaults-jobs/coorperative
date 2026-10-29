@@ -8,7 +8,7 @@ import { cn } from "@/components/ui/cn";
 import { Field, Input } from "@/components/ui/field";
 import { SettingsForm } from "../settings-form";
 
-const PRODUCT_COLOUR = "#0d7a5f";
+const PRODUCT_COLOUR = "#cc2a2f";
 
 export function BrandingEditor({ current, presets, name, canEdit }: { current: string | null; presets: { name: string; color: string }[]; name: string; canEdit: boolean }) {
   const [color, setColor] = useState(current ?? PRODUCT_COLOUR);

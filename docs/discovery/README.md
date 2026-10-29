@@ -37,6 +37,7 @@ Each claim carries one of these labels, so readers can see how far to trust it.
 | 9 | [From findings to a configurable PRD](09-findings-to-prd.md) | Plan for the requirements document |
 | 10 | [Choosing the first pilot cooperative](10-pilot-selection.md) | Pilot recommendation |
 | 11 | [UX and UI direction](11-ux-and-ui-direction.md) | Design principles and UI component strategy (provisional) |
+| 12 | [Community contribution workflows](12-community-contribution-workflows.md) | Weekly collection, interest, loan health and reports designed from the COMMUNITY CONTRIBUTION workbook |
 | — | [Decision log](decisions.md) | Decisions accepted 17 Oct 2026 |
 | — | [Fieldwork kit](kit/) | [Adviser ToRs](kit/adviser-terms-of-reference.md) · [Outreach](kit/recruitment-outreach.md) · [Screener](kit/screener.md) · [Consent and document sharing](kit/consent-and-document-sharing.md) |
 

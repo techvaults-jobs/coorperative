@@ -3,24 +3,27 @@
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 /*
- * Cooperative Vaults design tokens.
+ * Cooperative Vaults design tokens, in the TechVaults identity (red #ED3135, charcoal #333333).
+ * The accent is the logo red darkened to #CC2A2F so text reaches WCAG AA on white and on its soft tint (D-030).
  * Brand colours derive from one --accent, so a society can set its own colour
  * (style="--accent: …" on the workspace) and every tint follows. Status colours
  * are separate from the brand and never themed.
  */
 :root {
   color-scheme: light;
-  --accent: #0d7a5f;
+  --accent: #cc2a2f;
+  /* The charcoal half of the TechVaults logo; white on dark surfaces. */
+  --logo-ink: #333333;
   --gold: #a87a26;
 
-  --background: #f4f6f8;
+  --background: #f5f5f5;
   --surface: #ffffff;
-  --surface-2: #f8fafb;
-  --foreground: #0f1729;
-  --muted: #5a6577;
-  --subtle: #8a94a6;
-  --border: #e3e7ed;
-  --border-strong: #cfd5de;
+  --surface-2: #fafafa;
+  --foreground: #1f1f1f;
+  --muted: #5c5c5c;
+  --subtle: #8c8c8c;
+  --border: #e6e6e6;
+  --border-strong: #d4d4d4;
 
   --accent-foreground: #ffffff;
   --accent-soft: color-mix(in oklab, var(--accent) 10%, var(--surface));
@@ -31,8 +34,8 @@
   --success-soft: #e4f4ee;
   --warning: #92600e;
   --warning-soft: #fbf0db;
-  --danger: #b4282f;
-  --danger-soft: #fbe7e7;
+  --danger: #9f1239;
+  --danger-soft: #fce7ee;
   --info: #2563c9;
   --info-soft: #e6eefb;
 
@@ -40,51 +43,52 @@
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-3: #1baf7a;
-  --grid: #e8ebef;
+  --grid: #ebebeb;
 
-  /* Shell: an ink sidebar in both themes. */
-  --sidebar: #0b1322;
-  --sidebar-2: #121c2f;
-  --sidebar-foreground: #c5cedb;
-  --sidebar-muted: #7d8aa0;
-  --sidebar-border: #1c2840;
-  --sidebar-accent: color-mix(in oklab, var(--accent) 55%, #7ff0c8);
+  /* Shell: a TechVaults charcoal sidebar in both themes. */
+  --sidebar: #2b2b2b;
+  --sidebar-2: #363636;
+  --sidebar-foreground: #d6d6d6;
+  --sidebar-muted: #9a9a9a;
+  --sidebar-border: #3d3d3d;
+  --sidebar-accent: #ff7a7d;
 
-  --shadow-sm: 0 1px 2px rgb(15 23 41 / 0.06);
-  --shadow-md: 0 4px 16px -4px rgb(15 23 41 / 0.12), 0 2px 4px rgb(15 23 41 / 0.04);
-  --shadow-lg: 0 24px 48px -12px rgb(15 23 41 / 0.25);
+  --shadow-sm: 0 1px 2px rgb(31 31 31 / 0.06);
+  --shadow-md: 0 4px 16px -4px rgb(31 31 31 / 0.12), 0 2px 4px rgb(31 31 31 / 0.04);
+  --shadow-lg: 0 24px 48px -12px rgb(31 31 31 / 0.25);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --accent: #2fbf8f;
+    --accent: #f2575b;
+    --logo-ink: #ffffff;
     --gold: #d9a94c;
-    --background: #080d17;
-    --surface: #0f1726;
-    --surface-2: #131c2e;
-    --foreground: #e7ecf3;
-    --muted: #97a3b6;
-    --subtle: #6b778b;
-    --border: #1e293d;
-    --border-strong: #2b3850;
-    --accent-foreground: #04261b;
+    --background: #121212;
+    --surface: #1a1a1a;
+    --surface-2: #202020;
+    --foreground: #ededed;
+    --muted: #a3a3a3;
+    --subtle: #737373;
+    --border: #2a2a2a;
+    --border-strong: #3a3a3a;
+    --accent-foreground: #1a0405;
     --accent-strong: color-mix(in oklab, var(--accent) 80%, white);
     --success: #3fcf9a;
     --success-soft: #0f2e25;
     --warning: #e9b45a;
     --warning-soft: #33270f;
-    --danger: #f08a8a;
-    --danger-soft: #3a1719;
+    --danger: #fb7196;
+    --danger-soft: #3b1322;
     --info: #79a8f2;
     --info-soft: #14233f;
     --series-1: #3987e5;
     --series-2: #d95926;
     --series-3: #199e70;
-    --grid: #1c2638;
-    --sidebar: #060a12;
-    --sidebar-2: #0d1422;
-    --sidebar-border: #162036;
+    --grid: #262626;
+    --sidebar: #0d0d0d;
+    --sidebar-2: #1a1a1a;
+    --sidebar-border: #262626;
     --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
     --shadow-md: 0 4px 16px -4px rgb(0 0 0 / 0.5);
     --shadow-lg: 0 24px 48px -12px rgb(0 0 0 / 0.6);
@@ -93,33 +97,34 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --accent: #2fbf8f;
+  --accent: #f2575b;
+  --logo-ink: #ffffff;
   --gold: #d9a94c;
-  --background: #080d17;
-  --surface: #0f1726;
-  --surface-2: #131c2e;
-  --foreground: #e7ecf3;
-  --muted: #97a3b6;
-  --subtle: #6b778b;
-  --border: #1e293d;
-  --border-strong: #2b3850;
-  --accent-foreground: #04261b;
+  --background: #121212;
+  --surface: #1a1a1a;
+  --surface-2: #202020;
+  --foreground: #ededed;
+  --muted: #a3a3a3;
+  --subtle: #737373;
+  --border: #2a2a2a;
+  --border-strong: #3a3a3a;
+  --accent-foreground: #1a0405;
   --accent-strong: color-mix(in oklab, var(--accent) 80%, white);
   --success: #3fcf9a;
   --success-soft: #0f2e25;
   --warning: #e9b45a;
   --warning-soft: #33270f;
-  --danger: #f08a8a;
-  --danger-soft: #3a1719;
+  --danger: #fb7196;
+  --danger-soft: #3b1322;
   --info: #79a8f2;
   --info-soft: #14233f;
   --series-1: #3987e5;
   --series-2: #d95926;
   --series-3: #199e70;
-  --grid: #1c2638;
-  --sidebar: #060a12;
-  --sidebar-2: #0d1422;
-  --sidebar-border: #162036;
+  --grid: #262626;
+  --sidebar: #0d0d0d;
+  --sidebar-2: #1a1a1a;
+  --sidebar-border: #262626;
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
   --shadow-md: 0 4px 16px -4px rgb(0 0 0 / 0.5);
   --shadow-lg: 0 24px 48px -12px rgb(0 0 0 / 0.6);
