@@ -1,5 +1,5 @@
 import type { Module, Permission } from "@techvaults/core";
-import { Banknote, BookOpen, ClipboardCheck, ClipboardList, FileBarChart, FileSpreadsheet, HandCoins, LayoutDashboard, Package, Scale, Settings, ShieldCheck, UserCog, Users, type LucideIcon } from "lucide-react";
+import { Banknote, Percent, BookOpen, ClipboardCheck, ClipboardList, FileBarChart, FileSpreadsheet, HandCoins, LayoutDashboard, Package, Scale, Settings, ShieldCheck, UserCog, Users, type LucideIcon } from "lucide-react";
 
 export interface NavItem {
   href: string;
@@ -26,6 +26,7 @@ export const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     label: "Finance",
     items: [
       { href: "/ledger", label: "Journal", icon: BookOpen, anyOf: ["ledger.read"], keywords: "entries ledger post" },
+      { href: "/loans/interest", label: "Loan interest", icon: Percent, anyOf: ["ledger.prepare", "ledger.approve"], module: "loans", keywords: "monthly interest charge register 1.5% flexible weekly" },
       { href: "/collections", label: "Collections", icon: ClipboardList, anyOf: ["collections.manage", "ledger.read"], module: "collections", keywords: "weekly meeting contributions cash card sheet thrift" },
       { href: "/payroll", label: "Payroll deductions", icon: FileSpreadsheet, anyOf: ["payroll.manage"], module: "payroll", keywords: "remittance employer schedule reconciliation ippis" },
       { href: "/approvals", label: "Approvals", icon: ClipboardCheck, anyOf: ["ledger.approve", "ledger.prepare"], keywords: "maker checker pending" },

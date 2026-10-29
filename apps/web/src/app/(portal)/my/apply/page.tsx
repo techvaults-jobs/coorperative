@@ -3,7 +3,7 @@ import { listProducts, withSociety } from "@techvaults/db";
 import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/ui/page-header";
 import { db } from "@/lib/db";
-import { bpsToPercent } from "@/lib/policy-form";
+import { rateText } from "@/lib/policy-form";
 import { requirePortal } from "@/lib/session";
 import { requirePortalSociety } from "@/lib/society";
 import { MemberApplyForm } from "./member-apply-form";
@@ -31,7 +31,7 @@ export default async function ApplyPage() {
             return {
               id: p.id,
               label: p.name,
-              summary: `${bpsToPercent(policy.annualRateBps)} a year, ${INTEREST_METHOD_LABELS[policy.interestMethod].label.toLowerCase()} · up to ${formatNaira(policy.maxAmount)} · ${policy.minTermMonths}–${policy.maxTermMonths} months`,
+              summary: `${rateText(policy)}, ${INTEREST_METHOD_LABELS[policy.interestMethod].label.toLowerCase()} · up to ${formatNaira(policy.maxAmount)} · ${policy.minTermMonths}–${policy.maxTermMonths} months`,
               guarantors: policy.guarantorsRequired,
               maxTerm: policy.maxTermMonths,
               minTerm: policy.minTermMonths,

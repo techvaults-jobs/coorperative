@@ -13,6 +13,8 @@ export interface MemberPreview {
   checks: EligibilityCheck[];
   payment: string | null;
   totalRepayable: string | null;
+  /** Flexible weekly loans: the expected weekly repayment and the first month's interest. */
+  weekly: { repayment: string; firstMonthInterest: string } | null;
   fee: string;
   guarantors: { memberNo: string; name: string | null }[];
 }
@@ -40,6 +42,7 @@ export async function previewOwnLoan(input: { productId: string; amount: string;
         checks: r.checks,
         payment: r.schedule?.instalments[0]?.payment.toString() ?? null,
         totalRepayable: r.schedule?.totalRepayable.toString() ?? null,
+        weekly: r.weekly ? { repayment: r.weekly.repayment.toString(), firstMonthInterest: r.weekly.firstMonthInterest.toString() } : null,
         fee: r.fee.toString(),
         guarantors: guarantors.map((g) => ({ memberNo: g.memberNo, name: g.name })),
       };

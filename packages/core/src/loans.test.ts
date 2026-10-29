@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { addMonths, buildSchedule, checkEligibility, DEFAULT_LOAN_POLICY, loadLoanPolicy, processingFee, storeLoanPolicy, validateLoanPolicy, type LoanPolicy } from "./loans.js";
+import {
+  addMonths,
+  buildSchedule,
+  checkEligibility,
+  DEFAULT_LOAN_POLICY,
+  expectedWeeklyRepayment,
+  loadLoanPolicy,
+  monthEnd,
+  monthlyInterest,
+  processingFee,
+  storeLoanPolicy,
+  termWeeks,
+  validateLoanPolicy,
+  weeklyProgress,
+  type LoanPolicy,
+} from "./loans.js";
 import { kobo, parseNaira } from "./money.js";
 
 const P = parseNaira("100000");
@@ -62,6 +77,53 @@ describe("loan schedules", () => {
   it("charges the processing fee on the principal", () => {
     expect(processingFee(P, { processingFeeBps: 100 })).toBe(parseNaira("1000"));
     expect(processingFee(kobo(333), { processingFeeBps: 150 })).toBe(kobo(5));
+  });
+});
+
+describe("flexible weekly loans (D-028)", () => {
+  const P400 = parseNaira("400000");
+
+  it("charges 1.5% a month on the outstanding balance, as the workbook does", () => {
+    // 18% a year is 1.5% a month.
+    expect(monthlyInterest(parseNaira("359000"), 1800)).toBe(parseNaira("5385"));
+    expect(monthlyInterest(kobo(3_333), 1800)).toBe(kobo(50)); // 49.995 rounds half-up
+  });
+
+  it("has no fixed schedule", () => {
+    expect(() => buildSchedule(P400, 12, "flexible_weekly", 1800, "2026-11-02")).toThrow(/no fixed schedule/);
+  });
+
+  it("expects principal ÷ term in weeks at each meeting", () => {
+    expect(termWeeks(12)).toBe(52);
+    expect(termWeeks(6)).toBe(26);
+    expect(expectedWeeklyRepayment(P400, 12)).toBe(parseNaira("7692.31")); // rounded up
+  });
+
+  it("tracks the running total, not each week", () => {
+    const weekly = expectedWeeklyRepayment(P400, 12);
+    // Third meeting, two weeks' worth paid: one repayment behind since that meeting.
+    const p = weeklyProgress(P400, 12, "2026-11-02", 2n * weekly, "2026-11-16");
+    expect(p).toMatchObject({ expected: kobo(3n * weekly), behind: weekly, weeksBehind: 1, daysPastDue: 1 });
+    expect(p.nextDue).toEqual({ number: 4, dueDate: "2026-11-23", amount: kobo(2n * weekly) });
+    // Paying ahead: nothing behind, and the next amount falls on a later meeting.
+    const ahead = weeklyProgress(P400, 12, "2026-11-02", 5n * weekly, "2026-11-09");
+    expect(ahead).toMatchObject({ behind: 0n, daysPastDue: 0 });
+    expect(ahead.nextDue).toEqual({ number: 6, dueDate: "2026-12-07", amount: weekly });
+    // Nothing paid for six weeks: overdue since the first meeting.
+    expect(weeklyProgress(P400, 12, "2026-11-02", 0n, "2026-12-14").daysPastDue).toBe(42);
+  });
+
+  it("never expects more than the principal", () => {
+    const p = weeklyProgress(P400, 12, "2025-01-06", parseNaira("390000"), "2026-10-26");
+    expect(p.expected).toBe(P400);
+    expect(p.behind).toBe(parseNaira("10000"));
+    expect(p.nextDue!.amount).toBe(parseNaira("10000"));
+    expect(weeklyProgress(P400, 12, "2025-01-06", P400, "2026-10-26").nextDue).toBeNull();
+  });
+
+  it("charges on the last day of the month", () => {
+    expect(monthEnd("2025-04")).toBe("2025-04-30");
+    expect(monthEnd("2028-02")).toBe("2028-02-29");
   });
 });
 

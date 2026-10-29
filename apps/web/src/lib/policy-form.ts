@@ -17,6 +17,9 @@ export function percentToBps(input: string): number {
 }
 
 export const bpsToPercent = (bps: number) => `${(bps / 100).toLocaleString("en-NG", { maximumFractionDigits: 2 })}%`;
+/** A loan rate as members say it: "1.5% a month" for flexible weekly loans (D-028), "12% a year" otherwise. */
+export const rateText = (p: Pick<LoanPolicy, "interestMethod" | "annualRateBps">) =>
+  p.interestMethod === "flexible_weekly" ? `${bpsToPercent(p.annualRateBps / 12)} a month` : `${bpsToPercent(p.annualRateBps)} a year`;
 export const koboToNairaInput = (k: bigint) => (Number(k) / 100).toFixed(2).replace(/\.00$/, "");
 
 function naira(form: FormData, key: string) {

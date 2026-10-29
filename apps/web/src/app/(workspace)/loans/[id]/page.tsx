@@ -1,5 +1,5 @@
-import { formatNaira, type Kobo } from "@techvaults/core";
-import { getLoan, listAccounts } from "@techvaults/db";
+import { formatNaira, isFlexible, nextMeetingDate, type Kobo } from "@techvaults/core";
+import { getLoan, listAccounts, loanInterestCharges, meetingWeekday } from "@techvaults/db";
 import { CalendarClock, CheckCircle2, Circle, HandCoins, TriangleAlert, Wallet } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -12,6 +12,7 @@ import { cn } from "@/components/ui/cn";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat";
 import { Table, Td, Th } from "@/components/ui/table";
+import { WeeklyLoanCards } from "@/components/loans/weekly-loan";
 import { LOAN_STATUS } from "@/lib/loan-status";
 import { hasPermission, inSociety, requireWorkspace } from "@/lib/session";
 import { PolicyGrid } from "../../products/policy-summary";
@@ -40,13 +41,15 @@ export default async function LoanPage({ params, searchParams }: { params: Promi
     const loan = await getLoan(tx, ws.actor, id);
     if (!loan) return null;
     const banks = canLedger ? (await listAccounts(tx, ws.actor)).filter((a) => a.class === "asset" && !a.isMemberControl && a.isActive) : [];
-    return { loan, banks };
+    const flexible = isFlexible(loan.policy.interestMethod);
+    return { loan, banks, flexible, charges: flexible ? await loanInterestCharges(tx, ws.actor, id) : [], weekday: flexible ? await meetingWeekday(tx, ws.actor) : null };
   });
   if (!data) notFound();
-  const { loan, banks } = data;
+  const { loan, banks, flexible, charges, weekday } = data;
   const pos = loan.position;
   const status = LOAN_STATUS[loan.status]!;
   const today = new Date().toISOString().slice(0, 10);
+  const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
   let remaining = (pos.principalRepaid + pos.interestPaid) as bigint;
   const rows = (pos.schedule?.instalments ?? []).map((i) => {
     const cover = remaining >= i.payment ? i.payment : remaining;
@@ -119,6 +122,9 @@ export default async function LoanPage({ params, searchParams }: { params: Promi
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="flex min-w-0 flex-col gap-4">
+          {flexible ? (
+            <WeeklyLoanCards position={pos} charges={charges} termMonths={loan.termMonths} annualRateBps={loan.policy.annualRateBps} audience="officer" />
+          ) : (
           <Card>
             <CardHeader title="Repayment schedule" description={pos.schedule ? `Interest ${formatNaira(pos.schedule.totalInterest)} · total ${formatNaira(pos.schedule.totalRepayable)}` : undefined} />
             <CardBody className="pt-4">
@@ -165,6 +171,7 @@ export default async function LoanPage({ params, searchParams }: { params: Promi
               )}
             </CardBody>
           </Card>
+          )}
           <Card>
             <CardHeader title="Terms granted" description="The product policy this loan was approved under. Later policy changes don't affect it." />
             <CardBody>
@@ -189,6 +196,7 @@ export default async function LoanPage({ params, searchParams }: { params: Promi
               banks={banks.map((b) => ({ id: b.id, label: `${b.code} · ${b.name}` }))}
               today={today}
               fee={formatNaira(((loan.amount * BigInt(loan.policy.processingFeeBps) + 5_000n) / 10_000n) as Kobo)}
+              {...(flexible && weekday !== null ? { firstDue: nextMeetingDate(weekday, tomorrow) } : {})}
             />
           )}
           {loan.status === "active" && canLedger && (

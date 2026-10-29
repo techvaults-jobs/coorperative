@@ -129,6 +129,25 @@ export function ApplicationForm({ members, products, initialMemberId }: { member
             )}
           </CardBody>
         </Card>
+        {preview?.weekly && (
+          <Card>
+            <CardHeader title="Repayment" description="Flexible: the member repays any amount at each meeting. Interest is charged monthly on what's still owed." />
+            <CardBody>
+              <dl className="grid grid-cols-2 gap-3 text-sm">
+                {[
+                  ["Expected each week", money(preview.weekly.repayment)],
+                  ["First month's interest", money(preview.weekly.firstMonthInterest)],
+                  ["Processing fee", money(preview.fee)],
+                ].map(([k, v]) => (
+                  <div key={k}>
+                    <dt className="text-muted text-xs">{k}</dt>
+                    <dd className="font-semibold tabular-nums">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+            </CardBody>
+          </Card>
+        )}
         {preview?.totalRepayable && (
           <Card>
             <CardHeader title="Repayment" description="Illustrative: the real schedule starts from the disbursement date." />

@@ -85,7 +85,7 @@ export function ProductForm({
                   ))}
                 </Select>
               </Field>
-              <Field label="Annual interest rate (%)" htmlFor="annualRate">
+              <Field label="Annual interest rate (%)" htmlFor="annualRate" hint="For flexible weekly loans, the yearly equivalent: 1.5% a month is 18%.">
                 <Input id="annualRate" name="annualRate" inputMode="decimal" defaultValue={String(loan.annualRateBps / 100)} required />
               </Field>
               <Field label="Shortest term (months)" htmlFor="minTermMonths">

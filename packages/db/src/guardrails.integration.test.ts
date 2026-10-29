@@ -48,6 +48,7 @@ import {
   submitPayrollRun,
 } from "./services/payroll.js";
 import { collectionSheet, createCollectionSheet, listCollectionSheets, saveCollectionSheet, setMeetingWeekday, submitCollectionSheet } from "./services/collections.js";
+import { interestMonths, interestRunForPeriod, submitInterestRun } from "./services/interest.js";
 import { weekdayOf } from "@techvaults/core";
 import {
   acceptInvitation,
@@ -987,6 +988,104 @@ describe.runIf(ADMIN)("database guardrails", () => {
     const position = await withSociety(app.db, ids.socA, (tx) => loanPosition(tx, loanRow));
     expect(position.principalOutstanding).toBe(kobo(outstanding - parseNaira("2000")));
     await expect(withSociety(app.db, ids.socA, (tx) => saveCollectionSheet(tx, collector, sheetId, entries))).rejects.toThrow(/can no longer change/);
+  });
+
+  it("charges flexible weekly loans 1.5% a month and collects the interest at meetings", async () => {
+    const committee = actor(["chairperson"], ids.chair);
+    const collector = actor(["collector"], ids.auditor);
+    const secretary = actor(["secretary"], ids.treasurer);
+    const code = async (c: string) => ((await admin`select id from ledger_accounts where society_id = ${ids.socA} and code = ${c}`) as unknown as [{ id: string }])[0].id;
+    const policy = { ...DEFAULT_LOAN_POLICY, interestMethod: "flexible_weekly" as const, annualRateBps: 1800, minMembershipMonths: 0, savingsMultiple: null, guarantorsRequired: 0, processingFeeBps: 0, minAmount: parseNaira("1000"), maxAmount: parseNaira("1000000"), minTermMonths: 1 };
+    const [loanAccountId, incomeAccountId] = [await code("1300"), await code("4200")];
+    const productId = await withSociety(app.db, ids.socA, (tx) => proposeProduct(tx, secretary, { kind: "loan", code: "wk-loan", name: "Weekly loan", accountId: loanAccountId, incomeAccountId, policy }));
+    await withSociety(app.db, ids.socA, (tx) => approveProductPolicy(tx, committee, productId));
+    const member = await withSociety(app.db, ids.socA, (tx) => createMember(tx, secretary, { memberNo: "A-010", fullName: "Weekly Borrower", status: "active" }));
+
+    // No schedule: the preview shows the expected weekly repayment and a month's interest.
+    const preview = await withSociety(app.db, ids.socA, (tx) => loanEligibility(tx, treasurer(), { memberId: member.id, productId, amount: parseNaira("400000"), termMonths: 12, guarantors: 0 }));
+    expect(preview.schedule).toBeNull();
+    expect(preview.weekly).toEqual({ repayment: parseNaira("7692.31"), firstMonthInterest: parseNaira("6000") });
+    const loan = await withSociety(app.db, ids.socA, (tx) => applyForLoan(tx, treasurer(), { memberId: member.id, productId, amount: parseNaira("400000"), termMonths: 12, purpose: "Shop stock", guarantorIds: [] }));
+    await withSociety(app.db, ids.socA, (tx) => decideLoan(tx, committee, loan.id, "approve", ""));
+    const d = await withSociety(app.db, ids.socA, (tx) => disburseLoan(tx, treasurer(), loan.id, { disbursedOn: "2026-08-03", firstDueDate: "2026-08-10", bankAccountId: ids.bank, idempotencyKey: "wk-disburse" }));
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, committee, d.submissionId));
+    const loanRow = async () => (await withSociety(app.db, ids.socA, (tx) => tx.select().from(schema.loans).where(sql`id = ${loan.id}`)))[0]!;
+    const position = async (asOf?: string) => withSociety(app.db, ids.socA, async (tx) => loanPosition(tx, await loanRow(), asOf));
+    const repay = async (amount: string, paidOn: string, key: string) => {
+      const r = await withSociety(app.db, ids.socA, (tx) => recordRepayment(tx, treasurer(), loan.id, { amount: parseNaira(amount), paidOn, bankAccountId: ids.bank, idempotencyKey: key }));
+      await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, committee, r.submissionId));
+      return r;
+    };
+
+    // Any amount on any week; nothing is charged until the month's run, so it's all principal.
+    expect(await repay("20000", "2026-08-24", "wk-r1")).toMatchObject({ principal: parseNaira("20000"), interest: 0n });
+    let pos = await position("2026-08-31");
+    expect(pos.schedule).toBeNull();
+    expect(pos.weekly).toMatchObject({ weekly: parseNaira("7692.31"), behind: parseNaira("10769.24") }); // four meetings expected (10–31 Aug), ₦20,000 paid
+
+    // The run waits for loan entries of the month still awaiting approval.
+    const pending = await withSociety(app.db, ids.socA, (tx) => recordRepayment(tx, treasurer(), loan.id, { amount: parseNaira("500"), paidOn: "2026-08-28", bankAccountId: ids.bank, idempotencyKey: "wk-pending" }));
+    let month = await withSociety(app.db, ids.socA, (tx) => interestRunForPeriod(tx, treasurer(), "2026-08"));
+    expect(month.blockers.join(" ")).toMatch(/waiting for approval/);
+    await expect(withSociety(app.db, ids.socA, (tx) => submitInterestRun(tx, treasurer(), { period: "2026-08", idempotencyKey: "int-08-a" }))).rejects.toThrow(/waiting for approval/);
+    await withSociety(app.db, ids.socA, (tx) => withdrawSubmission(tx, treasurer(), pending.submissionId));
+    await expect(withSociety(app.db, ids.socA, (tx) => submitInterestRun(tx, treasurer(), { period: "2099-01", idempotencyKey: "int-future" }))).rejects.toThrow(/hasn't ended/);
+
+    // 1.5% of the ₦380,000 outstanding at the month end, the workbook's own formula.
+    month = await withSociety(app.db, ids.socA, (tx) => interestRunForPeriod(tx, treasurer(), "2026-08"));
+    expect(month.blockers).toEqual([]);
+    expect(month.rows).toHaveLength(1); // the scheduled loan from earlier isn't charged here
+    expect(month.rows[0]).toMatchObject({ loanNo: loan.loanNo, balance: parseNaira("380000"), charge: parseNaira("5700") });
+    await expect(withSociety(app.db, ids.socA, (tx) => submitInterestRun(tx, collector, { period: "2026-08", idempotencyKey: "int-08-b" }))).rejects.toBeInstanceOf(PermissionError);
+    const first = await withSociety(app.db, ids.socA, (tx) => submitInterestRun(tx, treasurer(), { period: "2026-08", idempotencyKey: "int-08-b" }));
+    await expect(withSociety(app.db, ids.socA, (tx) => submitInterestRun(tx, treasurer(), { period: "2026-08", idempotencyKey: "int-08-c" }))).rejects.toThrow(/already been charged/);
+    await rejectsWith(withSociety(app.db, ids.socA, (tx) => tx.execute(sql`update interest_charges set amount = 1 where run_id = ${first.runId}`)), /permission denied/);
+
+    // Turned down: the run is abandoned and the month can be charged again.
+    await withSociety(app.db, ids.socA, (tx) => rejectSubmission(tx, committee, first.submissionId, "Check the balances"));
+    expect((await withSociety(app.db, ids.socA, (tx) => interestRunForPeriod(tx, treasurer(), "2026-08"))).run).toBeNull();
+    const second = await withSociety(app.db, ids.socA, (tx) => submitInterestRun(tx, treasurer(), { period: "2026-08", idempotencyKey: "int-08-d" }));
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, committee, second.submissionId));
+    month = await withSociety(app.db, ids.socA, (tx) => interestRunForPeriod(tx, treasurer(), "2026-08"));
+    expect(month.run!.status).toBe("posted");
+    await rejectsWith(withSociety(app.db, ids.socA, (tx) => tx.execute(sql`update interest_runs set status = 'abandoned' where id = ${second.runId}`)), /can no longer change/);
+    const months = await withSociety(app.db, ids.socA, (tx) => interestMonths(tx, treasurer()));
+    expect(months.months.find((m) => m.period === "2026-08")).toMatchObject({ status: "posted", total: parseNaira("5700"), loans: 1 });
+    expect(months.months.find((m) => m.period === "2026-09")!.status).toBe("due");
+    pos = await position();
+    expect(pos).toMatchObject({ interestCharged: parseNaira("5700"), interestDue: parseNaira("5700"), interestPaid: 0n });
+
+    // The next meeting shows the interest due and pre-fills the expected weekly repayment.
+    const sheetId = await withSociety(app.db, ids.socA, (tx) => createCollectionSheet(tx, collector, { meetingDate: "2026-09-07" }));
+    const sheet = (await withSociety(app.db, ids.socA, (tx) => collectionSheet(tx, collector, sheetId)))!;
+    const row = sheet.rows.find((r) => r.memberId === member.id)!;
+    expect(row.loan!.interestDue).toBe(parseNaira("5700"));
+    expect(row.amounts).toMatchObject({ loan: parseNaira("7692.31"), interest: parseNaira("5700") });
+    // Interest can't be paid ahead of what's been charged.
+    const over = await withSociety(app.db, ids.socA, (tx) => saveCollectionSheet(tx, collector, sheetId, [{ memberId: member.id, amounts: { interest: parseNaira("6000") } }]));
+    expect(over.problems[0]!.message).toMatch(/Only ₦5,700\.00 interest is due/);
+    // A part payment leaves the rest as interest arrears.
+    const entries = [{ memberId: member.id, amounts: { loan: parseNaira("7692.31"), interest: parseNaira("3000") } }];
+    expect((await withSociety(app.db, ids.socA, (tx) => saveCollectionSheet(tx, collector, sheetId, entries))).problems).toEqual([]);
+    const income = async () => (await withSociety(app.db, ids.socA, (tx) => trialBalance(tx))).find((r) => r.code === "4200")!.balance;
+    const incomeBefore = await income();
+    const sub = await withSociety(app.db, ids.socA, (tx) =>
+      submitCollectionSheet(tx, treasurer(), sheetId, { cashCounted: parseNaira("10692.31"), transfers: kobo(0), bankAccountId: ids.bank, lodgementRef: "", differenceNote: "", idempotencyKey: "wk-sheet" }),
+    );
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, committee, sub.submissionId));
+    pos = await position();
+    expect(pos).toMatchObject({ interestPaid: parseNaira("3000"), interestDue: parseNaira("2700"), principalOutstanding: parseNaira("372307.69") });
+    let tb = await withSociety(app.db, ids.socA, (tx) => trialBalance(tx));
+    expect(tb.find((r) => r.code === "1400")!.balance).toBe(parseNaira("2700"));
+    expect(await income()).toBe(incomeBefore); // the run recognised the income; paying it doesn't count it twice
+
+    // A counter repayment covers the interest arrears first, then principal.
+    expect(await repay("10000", "2026-09-10", "wk-r2")).toMatchObject({ interest: parseNaira("2700"), principal: parseNaira("7300") });
+    pos = await position();
+    expect(pos.interestDue).toBe(0n);
+    tb = await withSociety(app.db, ids.socA, (tx) => trialBalance(tx));
+    expect(tb.find((r) => r.code === "1400")!.balance).toBe(0n);
+    expect(tb.reduce((s, r) => s + r.debit, 0n)).toBe(tb.reduce((s, r) => s + r.credit, 0n));
   });
 
   it("closes a year into reserves and locks it", async () => {

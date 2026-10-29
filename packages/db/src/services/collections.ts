@@ -16,7 +16,7 @@ import type { Tx } from "../client.js";
 import { collectionLines, collectionSheets, ledgerAccounts, loans, memberContributions, members, products, societies } from "../schema.js";
 import { recordAudit } from "./audit.js";
 import { PermissionError, submitJournalEntry, type Actor } from "./ledger.js";
-import { loanPosition } from "./loans.js";
+import { interestCreditAccount, loanIsFlexible, loanPosition } from "./loans.js";
 import { SUSPENSE_CODE } from "./payroll.js";
 
 export class CollectionError extends Error {
@@ -35,6 +35,7 @@ function canView(actor: Actor) {
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
+const naira = (k: bigint) => (Number(k) / 100).toLocaleString("en-NG", { style: "currency", currency: "NGN" });
 const byCard = (a: { memberNo: string }, b: { memberNo: string }) => a.memberNo.localeCompare(b.memberNo, undefined, { numeric: true });
 
 // ---------------------------------------------------------------------------
@@ -91,10 +92,14 @@ type LoanRow = typeof loans.$inferSelect;
 
 interface MemberLoan {
   loan: LoanRow;
+  flexible: boolean;
   outstanding: Kobo;
-  /** Principal due under the schedule by the meeting date, not yet paid. */
+  /**
+   * What the sheet pre-fills in the Loan column. Scheduled loans: principal due by the meeting
+   * date and not yet paid. Flexible loans: the expected weekly repayment.
+   */
   principalDue: Kobo;
-  /** Interest due under the schedule by the meeting date, not yet paid. */
+  /** Interest due by the meeting date and not yet paid (for flexible loans, charged and unpaid). */
   interestDue: Kobo;
 }
 
@@ -113,14 +118,17 @@ async function loansByMember(tx: Tx, actor: Actor, asOf: string): Promise<{ byMe
       continue;
     }
     const position = await loanPosition(tx, loan, asOf);
+    const flexible = loanIsFlexible(loan);
     const due = (position.schedule?.instalments ?? []).filter((i) => i.dueDate <= asOf);
-    const interestDue = due.reduce((s, i) => s + i.interest, 0n) - position.interestPaid;
-    const principalDue = due.reduce((s, i) => s + i.principal, 0n) - position.principalRepaid;
+    const principalDue = flexible
+      ? asOf >= (loan.firstDueDate ?? asOf) ? (position.weekly?.weekly ?? 0n) : 0n
+      : due.reduce((s, i) => s + i.principal, 0n) - position.principalRepaid;
     byMember.set(loan.memberId, {
       loan,
+      flexible,
       outstanding: position.principalOutstanding,
       principalDue: kobo(principalDue > 0n ? (principalDue < position.principalOutstanding ? principalDue : position.principalOutstanding) : 0n),
-      interestDue: kobo(interestDue > 0n ? interestDue : 0n),
+      interestDue: position.interestDue,
     });
   }
   return { byMember, others };
@@ -315,7 +323,15 @@ export async function saveCollectionSheet(tx: Tx, actor: Actor, sheetId: string,
           continue;
         }
         if (column.kind === "loan" && amount > loan.outstanding) {
-          problems.push({ memberNo: person.memberNo, message: `Loan #${loan.loan.loanNo} has only ${(Number(loan.outstanding) / 100).toLocaleString("en-NG", { style: "currency", currency: "NGN" })} outstanding. Put the excess in savings.` });
+          problems.push({ memberNo: person.memberNo, message: `Loan #${loan.loan.loanNo} has only ${naira(loan.outstanding)} outstanding. Put the excess in savings.` });
+          continue;
+        }
+        // Flexible loans: interest is paid against what the monthly runs have charged, never ahead of it.
+        if (column.kind === "interest" && loan.flexible && amount > loan.interestDue) {
+          problems.push({
+            memberNo: person.memberNo,
+            message: loan.interestDue > 0n ? `Only ${naira(loan.interestDue)} interest is due on loan #${loan.loan.loanNo}. Put the rest towards the loan.` : `No interest is due on loan #${loan.loan.loanNo} yet. Put this towards the loan.`,
+          });
           continue;
         }
         rows.push({ societyId: actor.societyId, sheetId, memberId: person.id, kind: column.kind, productId: loan.loan.productId, loanId: loan.loan.id, amount });
@@ -378,10 +394,14 @@ export async function submitCollectionSheet(
   const productById = new Map(productRows.map((p) => [p.id, p]));
   const people = await tx.select({ id: members.id, memberNo: members.memberNo }).from(members).where(eq(members.societyId, actor.societyId));
   const cardOf = new Map(people.map((p) => [p.id, p.memberNo]));
+  const loanIds = [...new Set(lines.flatMap((l) => (l.loanId ? [l.loanId] : [])))];
+  const loanRows = loanIds.length ? await tx.select().from(loans).where(inArray(loans.id, loanIds)) : [];
+  const interestAccountOf = new Map<string, string>();
+  for (const loan of loanRows) interestAccountOf.set(loan.id, await interestCreditAccount(tx, loan));
   const journal: JournalLine[] = [{ accountId: bank.id, side: "debit", amount: cash.received, memo: `Collections ${sheet.meetingDate}${input.lodgementRef.trim() ? ` · ${input.lodgementRef.trim()}` : ""}` }];
   for (const l of [...lines].sort((a, b) => byCard({ memberNo: cardOf.get(a.memberId) ?? "" }, { memberNo: cardOf.get(b.memberId) ?? "" }))) {
     const product = productById.get(l.productId)!;
-    if (l.kind === "interest") journal.push({ accountId: product.incomeAccountId!, side: "credit", amount: kobo(l.amount), loanId: l.loanId!, memo: "Interest" });
+    if (l.kind === "interest") journal.push({ accountId: interestAccountOf.get(l.loanId!) ?? product.incomeAccountId!, side: "credit", amount: kobo(l.amount), loanId: l.loanId!, memo: "Interest" });
     else journal.push({ accountId: product.accountId, side: "credit", amount: kobo(l.amount), memberId: l.memberId, ...(l.loanId ? { loanId: l.loanId } : {}) });
   }
   if (cash.difference !== 0n) {

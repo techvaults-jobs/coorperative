@@ -3,7 +3,7 @@ import { listMembers, listProducts } from "@techvaults/db";
 import Link from "next/link";
 import { buttonClass } from "@/components/ui/button";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
-import { bpsToPercent } from "@/lib/policy-form";
+import { rateText } from "@/lib/policy-form";
 import { hasPermission, inSociety, requireWorkspace } from "@/lib/session";
 import { ApplicationForm } from "./application-form";
 
@@ -39,7 +39,7 @@ export default async function NewLoanPage({ searchParams }: { searchParams: Prom
           return {
             id: p.id,
             label: p.name,
-            summary: `${bpsToPercent(policy.annualRateBps)} a year, ${INTEREST_METHOD_LABELS[policy.interestMethod].label.toLowerCase()} · ${formatNaira(policy.minAmount)}–${formatNaira(policy.maxAmount)} · ${policy.minTermMonths}–${policy.maxTermMonths} months`,
+            summary: `${rateText(policy)}, ${INTEREST_METHOD_LABELS[policy.interestMethod].label.toLowerCase()} · ${formatNaira(policy.minAmount)}–${formatNaira(policy.maxAmount)} · ${policy.minTermMonths}–${policy.maxTermMonths} months`,
             guarantors: policy.guarantorsRequired,
             maxTerm: policy.maxTermMonths,
             minTerm: policy.minTermMonths,

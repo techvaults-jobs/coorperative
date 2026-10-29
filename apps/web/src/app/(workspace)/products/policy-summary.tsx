@@ -9,7 +9,7 @@ export function policyTerms(kind: ProductKind, policy: Policy): [string, string]
   if (kind === "loan") {
     const p = policy as LoanPolicy;
     return [
-      ["Interest", `${bpsToPercent(p.annualRateBps)} a year`],
+      ["Interest", p.interestMethod === "flexible_weekly" ? `${bpsToPercent(p.annualRateBps / 12)} a month (${bpsToPercent(p.annualRateBps)} a year)` : `${bpsToPercent(p.annualRateBps)} a year`],
       ["Method", INTEREST_METHOD_LABELS[p.interestMethod].label],
       ["Amount", `${formatNaira(p.minAmount)} – ${formatNaira(p.maxAmount)}`],
       ["Term", `${p.minTermMonths}–${p.maxTermMonths} months`],

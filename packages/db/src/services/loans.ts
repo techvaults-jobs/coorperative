@@ -13,14 +13,19 @@ import {
   buildSchedule,
   can,
   checkEligibility,
+  expectedWeeklyRepayment,
+  isFlexible,
   kobo,
   loadLoanPolicy,
+  monthlyInterest,
   processingFee,
+  weeklyProgress,
   type EligibilityCheck,
   type Kobo,
   type LoanPolicy,
   type Schedule,
   type StoredLoanPolicy,
+  type WeeklyProgress,
 } from "@techvaults/core";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Tx } from "../client.js";
@@ -36,6 +41,36 @@ export class LoanError extends Error {
 }
 
 type LoanRow = typeof loans.$inferSelect;
+
+/** Where monthly interest on flexible weekly loans (D-028) waits until the member pays it. */
+export const INTEREST_RECEIVABLE_CODE = "1400";
+
+export async function findInterestReceivable(tx: Tx, societyId: string) {
+  const [a] = await tx.select().from(ledgerAccounts).where(and(eq(ledgerAccounts.societyId, societyId), eq(ledgerAccounts.code, INTEREST_RECEIVABLE_CODE)));
+  return a ?? null;
+}
+
+/** The interest receivable account, created the first time a society needs it. */
+export async function interestReceivableAccount(tx: Tx, actor: Actor) {
+  const existing = await findInterestReceivable(tx, actor.societyId);
+  if (existing) return existing;
+  const [row] = await tx
+    .insert(ledgerAccounts)
+    .values({ societyId: actor.societyId, code: INTEREST_RECEIVABLE_CODE, name: "Interest receivable on loans", class: "asset" })
+    .returning();
+  await recordAudit(tx, {
+    societyId: actor.societyId,
+    actorId: actor.userId,
+    action: "account.created",
+    entityType: "ledger_account",
+    entityId: row!.id,
+    after: { code: INTEREST_RECEIVABLE_CODE, name: row!.name, reason: "Needed for monthly interest on flexible loans" },
+  });
+  return row!;
+}
+
+export const loanIsFlexible = (loan: Pick<LoanRow, "policy">) => isFlexible(loadLoanPolicy(loan.policy as unknown as StoredLoanPolicy).interestMethod);
+
 export type LoanStatus = LoanRow["status"];
 
 async function activeLoanProduct(tx: Tx, productId: string) {
@@ -67,6 +102,8 @@ export interface EligibilityResult {
   eligible: boolean;
   checks: EligibilityCheck[];
   schedule: Schedule | null;
+  /** Flexible weekly loans: the expected weekly repayment and the first month's interest. */
+  weekly: { repayment: Kobo; firstMonthInterest: Kobo } | null;
   fee: Kobo;
   savings: Kobo;
 }
@@ -97,9 +134,14 @@ export async function loanEligibility(
     asOf,
   );
   const schedulable = input.amount > 0n && input.termMonths >= 1 && input.termMonths <= 120;
+  const flexible = isFlexible(policy.interestMethod);
   return {
     ...result,
-    schedule: schedulable ? buildSchedule(input.amount, input.termMonths, policy.interestMethod, policy.annualRateBps, endOfNextMonth(asOf)) : null,
+    schedule: schedulable && !flexible ? buildSchedule(input.amount, input.termMonths, policy.interestMethod, policy.annualRateBps, endOfNextMonth(asOf)) : null,
+    weekly:
+      schedulable && flexible
+        ? { repayment: expectedWeeklyRepayment(input.amount, input.termMonths), firstMonthInterest: kobo(monthlyInterest(input.amount, policy.annualRateBps)) }
+        : null,
     fee: input.amount > 0n ? processingFee(input.amount, policy) : kobo(0),
     savings,
   };
@@ -251,30 +293,65 @@ export interface LoanPosition {
   principalOutstanding: Kobo;
   principalRepaid: Kobo;
   interestPaid: Kobo;
-  /** Principal plus interest due by `asOf` under the schedule, less what's been paid. */
+  /** Flexible loans: interest charged by the monthly runs. Scheduled loans: interest due under the schedule to date. */
+  interestCharged: Kobo;
+  /** Interest charged or due to date and not yet paid (interest arrears). */
+  interestDue: Kobo;
+  /** Principal plus interest due by `asOf`, less what's been paid. */
   arrears: Kobo;
-  /** Days since the earliest instalment that isn't fully covered, 0 if up to date. */
+  /** Days since the earliest repayment that isn't fully covered, 0 if up to date. */
   daysPastDue: number;
-  /** Next instalment not yet fully covered, if any. */
+  /** Next repayment not yet fully covered, if any. */
   nextDue: { number: number; dueDate: string; amount: Kobo } | null;
   schedule: Schedule | null;
+  /** Flexible weekly loans only: progress against the expected weekly repayments. */
+  weekly: WeeklyProgress | null;
 }
 
-/** A loan's position from its sub-ledger and schedule. Payments cover instalments in order. */
+/**
+ * A loan's position from its sub-ledger. Scheduled loans: payments cover instalments in order.
+ * Flexible loans: interest charged and paid sit on interest receivable, and principal is
+ * tracked against the expected weekly repayment.
+ */
 export async function loanPosition(tx: Tx, loan: LoanRow, asOf = today()): Promise<LoanPosition> {
   const [product] = await tx.select().from(products).where(eq(products.id, loan.productId));
-  const [row] = await tx.execute<{ disbursed: string; repaid: string; interest: string }>(sql`
+  const policy = loadLoanPolicy(loan.policy as unknown as StoredLoanPolicy);
+  const flexible = isFlexible(policy.interestMethod);
+  const receivable = flexible ? await findInterestReceivable(tx, loan.societyId) : null;
+  const [row] = await tx.execute<{ disbursed: string; repaid: string; interest: string; charged: string; received: string }>(sql`
     select
       coalesce(sum(l.amount) filter (where l.account_id = ${product!.accountId} and l.side = 'debit'), 0)::text as disbursed,
       coalesce(sum(l.amount) filter (where l.account_id = ${product!.accountId} and l.side = 'credit'), 0)::text as repaid,
       coalesce(sum(case when l.side = 'credit' then l.amount else -l.amount end)
-        filter (where l.account_id = ${product!.incomeAccountId} and coalesce(l.memo, '') <> 'Processing fee'), 0)::text as interest
+        filter (where l.account_id = ${product!.incomeAccountId} and coalesce(l.memo, '') <> 'Processing fee'), 0)::text as interest,
+      coalesce(sum(l.amount) filter (where l.account_id = ${receivable?.id ?? null} and l.side = 'debit'), 0)::text as charged,
+      coalesce(sum(l.amount) filter (where l.account_id = ${receivable?.id ?? null} and l.side = 'credit'), 0)::text as received
     from journal_lines l where l.loan_id = ${loan.id}
   `);
   const disbursed = BigInt(row!.disbursed);
   const repaid = BigInt(row!.repaid);
+  const outstanding = kobo(disbursed - repaid);
+
+  if (flexible) {
+    const charged = BigInt(row!.charged);
+    const interestPaid = BigInt(row!.received);
+    const interestDue = charged > interestPaid ? charged - interestPaid : 0n;
+    const weekly = loan.firstDueDate && disbursed > 0n ? weeklyProgress(kobo(disbursed), loan.termMonths, loan.firstDueDate, repaid, asOf) : null;
+    return {
+      principalOutstanding: outstanding,
+      principalRepaid: kobo(repaid),
+      interestPaid: kobo(interestPaid),
+      interestCharged: kobo(charged),
+      interestDue: kobo(interestDue),
+      arrears: kobo((weekly?.behind ?? 0n) + interestDue),
+      daysPastDue: weekly?.daysPastDue ?? 0,
+      nextDue: weekly?.nextDue ?? null,
+      schedule: null,
+      weekly,
+    };
+  }
+
   const interestPaid = BigInt(row!.interest);
-  const policy = loadLoanPolicy(loan.policy as unknown as StoredLoanPolicy);
   const schedule = loan.firstDueDate ? buildSchedule(kobo(loan.amount), loan.termMonths, policy.interestMethod, policy.annualRateBps, loan.firstDueDate) : null;
   let arrears = 0n;
   let daysPastDue = 0;
@@ -294,32 +371,48 @@ export async function loanPosition(tx: Tx, loan: LoanRow, asOf = today()): Promi
       }
     }
   }
+  const scheduledInterest = (schedule?.instalments ?? []).filter((i) => i.dueDate <= asOf).reduce((s, i) => s + i.interest, 0n);
   return {
-    principalOutstanding: kobo(disbursed - repaid),
+    principalOutstanding: outstanding,
     principalRepaid: kobo(repaid),
     interestPaid: kobo(interestPaid),
+    interestCharged: kobo(scheduledInterest),
+    interestDue: kobo(scheduledInterest > interestPaid ? scheduledInterest - interestPaid : 0n),
     arrears: kobo(arrears),
     daysPastDue,
     nextDue,
     schedule,
+    weekly: null,
   };
 }
 
 /**
- * Split a payment on a loan, "interest first": interest due under the schedule up to `paidOn`
- * and not yet paid is covered first, the rest reduces principal. Refuses more than is owed.
+ * Split a payment on a loan, "interest first": interest due to `paidOn` and not yet paid is
+ * covered first, the rest reduces principal. Refuses more than is owed. Interest is credited
+ * to income on scheduled loans and to interest receivable on flexible ones (where the monthly
+ * run already recognised the income).
  */
-export async function splitRepayment(tx: Tx, loan: LoanRow, amount: Kobo, paidOn: string): Promise<{ interest: Kobo; principal: Kobo }> {
+export async function splitRepayment(tx: Tx, loan: LoanRow, amount: Kobo, paidOn: string): Promise<{ interest: Kobo; principal: Kobo; interestAccountId: string }> {
   const position = await loanPosition(tx, loan, paidOn);
-  const interestDue = (position.schedule?.instalments ?? []).filter((i) => i.dueDate <= paidOn).reduce((s, i) => s + i.interest, 0n) - position.interestPaid;
-  const interest = kobo(interestDue > 0n ? (amount < interestDue ? amount : interestDue) : 0n);
+  const interestDue = position.interestDue;
+  const interest = kobo(amount < interestDue ? amount : interestDue);
   const principal = kobo(amount - interest);
   if (principal > position.principalOutstanding) {
     throw new LoanError(
       `Loan #${loan.loanNo}: that's more than the outstanding principal and interest due (${(Number(position.principalOutstanding + interest) / 100).toLocaleString("en-NG", { style: "currency", currency: "NGN" })}).`,
     );
   }
-  return { interest, principal };
+  return { interest, principal, interestAccountId: await interestCreditAccount(tx, loan) };
+}
+
+/** The account a loan's interest payments are credited to. */
+export async function interestCreditAccount(tx: Tx, loan: LoanRow): Promise<string> {
+  if (loanIsFlexible(loan)) {
+    const receivable = await findInterestReceivable(tx, loan.societyId);
+    if (receivable) return receivable.id;
+  }
+  const [product] = await tx.select().from(products).where(eq(products.id, loan.productId));
+  return product!.incomeAccountId!;
 }
 
 /**
@@ -336,7 +429,7 @@ export async function recordRepayment(
   if (input.amount <= 0n) throw new LoanError("Enter the amount paid.");
   const loan = await lockLoan(tx, loanId);
   if (loan.status !== "active") throw new LoanError(`Repayments can only be recorded on an active loan (this one is ${loan.status}).`);
-  const { interest, principal } = await splitRepayment(tx, loan, input.amount, input.paidOn);
+  const { interest, principal, interestAccountId } = await splitRepayment(tx, loan, input.amount, input.paidOn);
   const [product] = await tx.select().from(products).where(eq(products.id, loan.productId));
   const bank = await bankAccount(tx, input.bankAccountId);
   const no = await memberNo(tx, loan.memberId);
@@ -347,7 +440,7 @@ export async function recordRepayment(
     lines: [
       { accountId: bank.id, side: "debit", amount: input.amount },
       ...(principal > 0n ? [{ accountId: product!.accountId, side: "credit" as const, amount: principal, memberId: loan.memberId, loanId: loan.id }] : []),
-      ...(interest > 0n ? [{ accountId: product!.incomeAccountId!, side: "credit" as const, amount: interest, loanId: loan.id, memo: "Interest" }] : []),
+      ...(interest > 0n ? [{ accountId: interestAccountId, side: "credit" as const, amount: interest, loanId: loan.id, memo: "Interest" }] : []),
     ],
   });
   return { submissionId: submission.id, interest, principal };
