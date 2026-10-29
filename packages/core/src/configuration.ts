@@ -9,7 +9,7 @@
 export const SECTORS = ["workplace", "agricultural", "transport", "market", "multipurpose", "credit_union", "housing", "other"] as const;
 export type Sector = (typeof SECTORS)[number];
 
-export const MODULES = ["savings", "shares", "loans", "payroll", "levies"] as const;
+export const MODULES = ["savings", "shares", "loans", "payroll", "collections", "levies"] as const;
 export type Module = (typeof MODULES)[number];
 
 /** Words a society can change so the register reads the way its members talk. */
@@ -40,43 +40,43 @@ export const SECTOR_PROFILES: Record<Sector, SectorProfile> = {
     label: "Agricultural",
     description: "Farmer groups with seasonal contributions, input loans and produce sales.",
     terminology: { externalId: "Farmer ID", group: "Farm cluster", contribution: "Contribution" },
-    modules: ["savings", "shares", "loans", "levies"],
+    modules: ["savings", "shares", "loans", "collections", "levies"],
   },
   transport: {
     label: "Transport",
     description: "Drivers' and operators' unions with daily or weekly levies.",
     terminology: { externalId: "Union card no.", group: "Route", contribution: "Daily levy" },
-    modules: ["savings", "shares", "loans", "levies"],
+    modules: ["savings", "shares", "loans", "collections", "levies"],
   },
   market: {
     label: "Market & traders",
     description: "Thrift and credit circles for market associations.",
     terminology: { externalId: "Stall no.", group: "Market line", contribution: "Thrift contribution" },
-    modules: ["savings", "shares", "loans", "levies"],
+    modules: ["savings", "shares", "loans", "collections", "levies"],
   },
   multipurpose: {
     label: "Multipurpose",
     description: "Savings, credit, consumer and investment arms under one register.",
     terminology: { externalId: "Member ID", group: "Branch", contribution: "Contribution" },
-    modules: ["savings", "shares", "loans", "payroll", "levies"],
+    modules: ["savings", "shares", "loans", "collections", "payroll", "levies"],
   },
   credit_union: {
     label: "Thrift & credit",
     description: "Thrift and credit societies with share capital and dividend cycles.",
     terminology: { externalId: "Member ID", group: "Zone", contribution: "Thrift savings" },
-    modules: ["savings", "shares", "loans"],
+    modules: ["savings", "shares", "loans", "collections"],
   },
   housing: {
     label: "Housing",
     description: "Housing and land cooperatives saving towards plots and units.",
     terminology: { externalId: "Member ID", group: "Estate", contribution: "Housing contribution" },
-    modules: ["savings", "shares", "loans"],
+    modules: ["savings", "shares", "loans", "collections"],
   },
   other: {
     label: "Other",
     description: "Any other kind of cooperative society.",
     terminology: { externalId: "Member ID", group: "Group", contribution: "Contribution" },
-    modules: ["savings", "shares", "loans"],
+    modules: ["savings", "shares", "loans", "collections"],
   },
 };
 
@@ -85,6 +85,7 @@ export const MODULE_LABELS: Record<Module, { label: string; description: string 
   shares: { label: "Share capital", description: "Members' shares within the 1/5 holding cap (Act s.27)" },
   loans: { label: "Loans", description: "Loan products, applications, approval and repayment schedules" },
   payroll: { label: "Payroll deductions", description: "Monthly deduction schedules and employer remittances" },
+  collections: { label: "Collections", description: "Weekly meeting sheets: savings, shares, loan repayments and interest collected in person or by transfer" },
   levies: { label: "Levies & dues", description: "Recurring dues collected outside payroll" },
 };
 

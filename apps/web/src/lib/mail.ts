@@ -23,13 +23,13 @@ const escape = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<":
 
 function render(m: Mail): { html: string; text: string } {
   const text = [m.heading, "", ...m.paragraphs.flatMap((p) => [p, ""]), ...(m.action ? [`${m.action.label}: ${m.action.url}`, ""] : []), m.footnote ?? "", "", "Cooperative Vaults, a TechVaults product"].join("\n");
-  const html = `<!doctype html><html><body style="margin:0;background:#f4f6f8;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0f1729">
+  const html = `<!doctype html><html><body style="margin:0;background:#f5f5f5;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f1f1f">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:32px 12px"><tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #e3e7ed;border-radius:14px">
-<tr><td style="padding:28px 32px 8px;font-size:13px;font-weight:600;color:#0d7a5f;letter-spacing:.04em;text-transform:uppercase">Cooperative Vaults</td></tr>
+<tr><td style="padding:28px 32px 8px;font-size:13px;font-weight:600;color:#cc2a2f;letter-spacing:.04em;text-transform:uppercase">Cooperative Vaults</td></tr>
 <tr><td style="padding:0 32px;font-size:22px;font-weight:600;line-height:1.3">${escape(m.heading)}</td></tr>
 <tr><td style="padding:12px 32px 0;font-size:15px;line-height:1.6;color:#3b4556">${m.paragraphs.map((p) => `<p style="margin:0 0 14px">${escape(p)}</p>`).join("")}</td></tr>
-${m.action ? `<tr><td style="padding:8px 32px 8px"><a href="${escape(m.action.url)}" style="display:inline-block;background:#0d7a5f;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 20px;border-radius:10px">${escape(m.action.label)}</a></td></tr>
+${m.action ? `<tr><td style="padding:8px 32px 8px"><a href="${escape(m.action.url)}" style="display:inline-block;background:#cc2a2f;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 20px;border-radius:10px">${escape(m.action.label)}</a></td></tr>
 <tr><td style="padding:8px 32px 0;font-size:12px;color:#5a6577;word-break:break-all">Or copy this link: ${escape(m.action.url)}</td></tr>` : ""}
 <tr><td style="padding:20px 32px 28px;font-size:12px;line-height:1.5;color:#8a94a6">${escape(m.footnote ?? "")}<br>Cooperative Vaults, a TechVaults product.</td></tr>
 </table></td></tr></table></body></html>`;

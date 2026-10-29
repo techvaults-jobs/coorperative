@@ -47,6 +47,8 @@ import {
   setContribution,
   submitPayrollRun,
 } from "./services/payroll.js";
+import { collectionSheet, createCollectionSheet, listCollectionSheets, saveCollectionSheet, setMeetingWeekday, submitCollectionSheet } from "./services/collections.js";
+import { weekdayOf } from "@techvaults/core";
 import {
   acceptInvitation,
   changeOfficerRoles,
@@ -559,7 +561,7 @@ describe.runIf(ADMIN)("database guardrails", () => {
     await rejectsWith(withSociety(app.db, ids.socA, (tx) => tx.execute(sql`update societies set brand_color = 'red'`)), /societies_brand_color/);
 
     const reset = await withSociety(app.db, ids.socA, (tx) => updateSocietySettings(tx, secretary, { modules: null }));
-    expect(reset.modules).toEqual(["savings", "shares", "loans", "levies"]); // agricultural defaults
+    expect(reset.modules).toEqual(["savings", "shares", "loans", "collections", "levies"]); // agricultural defaults
     const [event] = await withSociety(app.db, ids.socA, (tx) => listAuditEvents(tx, ids.socA, 1));
     expect(event).toMatchObject({ action: "society.settings_changed", before: { modules: ["savings", "loans"] }, after: { modules: null } });
     // Society B is untouched.
@@ -913,6 +915,78 @@ describe.runIf(ADMIN)("database guardrails", () => {
     expect(detail.status).toBe("active");
     expect(detail.position.principalOutstanding).toBe(parseNaira("12000"));
     expect(detail.position.nextDue?.dueDate).toBe("2026-11-30");
+  });
+
+  it("records a collection meeting, checks the cash, and posts it with a second officer", async () => {
+    const committee = actor(["chairperson"], ids.chair);
+    const collector = actor(["collector"], ids.auditor);
+    const meeting = "2026-10-05";
+    const [savingsP, sharesP] = await withSociety(app.db, ids.socA, async (tx) => [
+      (await listProducts(tx, treasurer(), { kind: "savings" }))[0]!,
+      (await listProducts(tx, treasurer(), { kind: "shares" }))[0]!,
+    ]);
+    const people = await withSociety(app.db, ids.socA, (tx) => listMembers(tx, actor(["secretary"])));
+    const a1 = people.find((m) => m.memberNo === "A-001")!;
+    const a2 = people.find((m) => m.memberNo === "A-002")!;
+
+    // Dates come from the meeting day: the wrong weekday and the future are refused.
+    await withSociety(app.db, ids.socA, (tx) => setMeetingWeekday(tx, treasurer(), weekdayOf(meeting)));
+    await expect(withSociety(app.db, ids.socA, (tx) => createCollectionSheet(tx, collector, { meetingDate: "2026-10-06" }))).rejects.toThrow(/Meetings are on/);
+    await expect(withSociety(app.db, ids.socA, (tx) => createCollectionSheet(tx, collector, { meetingDate: "2099-01-05" }))).rejects.toThrow(/before it happens/);
+    await expect(withSociety(app.db, ids.socA, (tx) => createCollectionSheet(tx, actor(["auditor"], ids.auditor), { meetingDate: meeting }))).rejects.toBeInstanceOf(PermissionError);
+
+    // The sheet opens pre-filled with usual contributions.
+    const sheetId = await withSociety(app.db, ids.socA, (tx) => createCollectionSheet(tx, collector, { meetingDate: meeting }));
+    await expect(withSociety(app.db, ids.socA, (tx) => createCollectionSheet(tx, collector, { meetingDate: meeting }))).rejects.toThrow(/already a sheet/);
+    let sheet = (await withSociety(app.db, ids.socA, (tx) => collectionSheet(tx, collector, sheetId)))!;
+    const row1 = sheet.rows.find((r) => r.memberId === a1.id)!;
+    expect(row1.amounts[savingsP.id]).toBe(parseNaira("10000"));
+    expect(row1.amounts[sharesP.id]).toBe(parseNaira("5000"));
+    expect(row1.loan).not.toBeNull();
+    expect(sheet.rows.find((r) => r.memberId === a2.id)!.loan).toBeNull();
+    const outstanding = row1.loan!.outstanding;
+
+    // A repayment from a member with no loan stops the whole save.
+    const bad = await withSociety(app.db, ids.socA, (tx) => saveCollectionSheet(tx, collector, sheetId, [{ memberId: a2.id, amounts: { loan: parseNaira("500") } }]));
+    expect(bad.problems[0]!.message).toMatch(/no active loan/);
+
+    // The collector records what was actually paid.
+    const entries = [
+      { memberId: a1.id, amounts: { [savingsP.id]: parseNaira("10000"), [sharesP.id]: parseNaira("5000"), loan: parseNaira("2000"), interest: parseNaira("100") } },
+      { memberId: a2.id, amounts: { [savingsP.id]: parseNaira("3000") } },
+    ];
+    expect((await withSociety(app.db, ids.socA, (tx) => saveCollectionSheet(tx, collector, sheetId, entries))).problems).toEqual([]);
+    sheet = (await withSociety(app.db, ids.socA, (tx) => collectionSheet(tx, collector, sheetId)))!;
+    expect(sheet.total).toBe(parseNaira("20100"));
+    expect(sheet.paidMembers).toBe(2);
+
+    // Only an officer who prepares entries submits, and a difference must be explained.
+    const submit = (who: Actor, note: string, key: string) =>
+      withSociety(app.db, ids.socA, (tx) =>
+        submitCollectionSheet(tx, who, sheetId, { cashCounted: parseNaira("19000"), transfers: parseNaira("1000"), bankAccountId: ids.bank, lodgementRef: "TLR-881", differenceNote: note, idempotencyKey: key }),
+      );
+    await expect(submit(collector, "", "c-1")).rejects.toBeInstanceOf(PermissionError);
+    await expect(submit(treasurer(), "", "c-1")).rejects.toThrow(/Explain the difference/);
+    const tbBefore = await withSociety(app.db, ids.socA, (tx) => trialBalance(tx));
+    const suspenseBefore = tbBefore.find((r) => r.code === "2900")!.balance;
+
+    // A rejected posting opens the sheet again; resubmitting and approving posts it.
+    const first = await submit(treasurer(), "₦100 short: card A-001 to bring it next week", "c-1");
+    await rejectsWith(withSociety(app.db, ids.socA, (tx) => tx.execute(sql`delete from collection_lines where sheet_id = ${sheetId}`)), /can no longer change/);
+    await withSociety(app.db, ids.socA, (tx) => rejectSubmission(tx, committee, first.submissionId, "Wrong teller number"));
+    expect((await withSociety(app.db, ids.socA, (tx) => collectionSheet(tx, collector, sheetId)))!.status).toBe("draft");
+    const second = await submit(treasurer(), "₦100 short: card A-001 to bring it next week", "c-2");
+    await withSociety(app.db, ids.socA, (tx) => approveSubmission(tx, committee, second.submissionId));
+
+    const [listed] = await withSociety(app.db, ids.socA, (tx) => listCollectionSheets(tx, treasurer()));
+    expect(listed).toMatchObject({ id: sheetId, status: "posted", total: parseNaira("20100"), received: parseNaira("20000") });
+    const tb = await withSociety(app.db, ids.socA, (tx) => trialBalance(tx));
+    expect(tb.find((r) => r.code === "2900")!.balance).toBe(kobo(suspenseBefore - parseNaira("100"))); // money short is a debit
+    expect(tb.reduce((s, r) => s + r.debit, 0n)).toBe(tb.reduce((s, r) => s + r.credit, 0n));
+    const loanRow = (await withSociety(app.db, ids.socA, (tx) => tx.select().from(schema.loans).where(sql`member_id = ${a1.id} and status = 'active'`)))[0]!;
+    const position = await withSociety(app.db, ids.socA, (tx) => loanPosition(tx, loanRow));
+    expect(position.principalOutstanding).toBe(kobo(outstanding - parseNaira("2000")));
+    await expect(withSociety(app.db, ids.socA, (tx) => saveCollectionSheet(tx, collector, sheetId, entries))).rejects.toThrow(/can no longer change/);
   });
 
   it("closes a year into reserves and locks it", async () => {

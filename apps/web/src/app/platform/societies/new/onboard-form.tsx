@@ -71,7 +71,7 @@ export function OnboardForm({ sectors }: { sectors: { value: string; label: stri
             </Select>
           </Field>
           <Field label="Brand colour" htmlFor="brandColor" hint="Optional hex, e.g. #1d5fae. Must be dark enough for white text.">
-            <Input id="brandColor" name="brandColor" className="font-mono" placeholder="#0d7a5f" />
+            <Input id="brandColor" name="brandColor" className="font-mono" placeholder="#cc2a2f" />
           </Field>
         </CardBody>
       </Card>

@@ -82,5 +82,5 @@ export async function setContributionAction(_prev: FormState, formData: FormData
     return { ok: false, message: explain(e) };
   }
   revalidatePath(`/members/${memberId}`);
-  return { ok: true, message: "Monthly contributions saved." };
+  return { ok: true, message: "Contributions saved." };
 }

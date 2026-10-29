@@ -6,4 +6,5 @@ export * from "./configuration.js";
 export * from "./loans.js";
 export * from "./products.js";
 export * from "./payroll.js";
+export * from "./collections.js";
 export * from "./importing.js";
